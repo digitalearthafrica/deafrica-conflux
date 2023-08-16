@@ -7,6 +7,7 @@ from . import _cli_push_to_queue
 from . import _cli_filter_from_queue
 from . import _cli_run_one_scene
 from . import _cli_run_from_queue
+from . import _cli_run_from_text
 from . import _cli_stack
 from . import _cli_package_delivery
 from . import _cli_db_to_csv
