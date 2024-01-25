@@ -1,4 +1,3 @@
-import json
 import logging
 
 import boto3
@@ -6,7 +5,7 @@ import click
 import fsspec
 
 from deafrica_conflux.cli.logs import logging_setup
-from deafrica_conflux.io import check_dir_exists, check_file_exists, check_if_s3_uri
+from deafrica_conflux.io import check_dir_exists, check_if_s3_uri
 from deafrica_conflux.queues import (
     delete_batch_with_retry,
     get_queue_url,
@@ -34,18 +33,7 @@ from deafrica_conflux.stack import stack_polygon_timeseries_to_csv
     type=str,
     help="SQS Queue to read the polygons ids from.",
 )
-@click.option(
-    "--polygon-stringids-to-tileids-file",
-    type=str,
-    help="JSON file mapping string polygons ids (UID) to the idsof the grids/tiles the polygon intersects with.",
-)
-def stack_from_sqs_queue(
-    verbose,
-    drill_output_directory,
-    output_directory,
-    ids_sqs_queue,
-    polygon_stringids_to_tileids_file,
-):
+def stack_from_sqs_queue(verbose, drill_output_directory, output_directory, ids_sqs_queue):
     """
     \b
     Stack outputs of deafrica-conflux into csv formats
@@ -58,7 +46,6 @@ def stack_from_sqs_queue(
     # Support pathlib Paths
     output_directory = str(output_directory)
     drill_output_directory = str(drill_output_directory)
-    polygon_stringids_to_tileids_file = str(polygon_stringids_to_tileids_file)
 
     if not check_dir_exists(drill_output_directory):
         _log.error(f"Directory {drill_output_directory} does not exist!")
@@ -72,18 +59,6 @@ def stack_from_sqs_queue(
             fsspec.filesystem("file").makedirs(output_directory, exist_ok=True)
         _log.info(f"Created directory {output_directory}")
 
-    if not check_file_exists(polygon_stringids_to_tileids_file):
-        _log.error(f"File {polygon_stringids_to_tileids_file} does not exist!")
-        raise FileNotFoundError(f"File {polygon_stringids_to_tileids_file} does not exist!)")
-
-    if check_if_s3_uri(polygon_stringids_to_tileids_file):
-        fs = fsspec.filesystem("s3")
-    else:
-        fs = fsspec.filesystem("file")
-
-    with fs.open(polygon_stringids_to_tileids_file) as f:
-        polygon_stringids_to_tileids = json.load(f)
-
     # Create the service client.
     sqs_client = boto3.client("sqs")
 
@@ -95,64 +70,64 @@ def stack_from_sqs_queue(
     max_retries = 10
     retries = 0
     while retries <= max_retries:
-        # Retrieve a single messages from the queue.
-        retrieved_message = receive_messages(
+        # Retrieve messages from the queue.
+        retrieved_messages = receive_messages(
             queue_url=ids_sqs_queue_url,
             max_retries=max_retries,
             visibility_timeout=900,
-            max_no_messages=1,
+            max_no_messages=5,
             sqs_client=sqs_client,
         )
-        if retrieved_message is None:
+        if retrieved_messages is None:
             retries += 1
         else:
             retries = 0  # reset the count
 
-            message = retrieved_message[0]
-
             # Get the polygon ids.
-            polygon_uid = message["Body"]
-            _log.info(f"Read polygon id {polygon_uid} from queue {ids_sqs_queue_url}")
+            polygon_ids = [message["Body"] for message in retrieved_messages]
+            _log.info(f"Read polygon ids {', '.join(polygon_ids)} from queue {ids_sqs_queue_url}")
 
-            entry_to_delete = [
+            entries_to_delete = [
                 {"Id": message["MessageId"], "ReceiptHandle": message["ReceiptHandle"]}
+                for message in retrieved_messages
             ]
 
             try:
                 stack_polygon_timeseries_to_csv(  # noqa F841
-                    polygon_uid=polygon_uid,
-                    polygon_stringids_to_tileids=polygon_stringids_to_tileids,
+                    polygon_ids=polygon_ids,
                     drill_output_directory=drill_output_directory,
                     output_directory=output_directory,
                 )
-                _log.info(f"Successfully stacked timeseries for polygon: {polygon_uid}")
+                _log.info(f"Successfully stacked timeseries for polygons: {', '.join(polygon_ids)}")
 
             except Exception as error:
                 _log.error(
-                    f"Encountered error while stacking timeseries for polygon: {polygon_uid}"
+                    f"Encountered error while stacking timeseries for polygons: {', '.join(polygon_ids)}"
                 )
                 _log.error(error)
                 move_to_dead_letter_queue(
                     dead_letter_queue_url=dead_letter_queue_url,
-                    message_body=polygon_uid,
+                    message_body=polygon_ids,
                     sqs_client=sqs_client,
                 )
                 _log.info(
-                    f"Moved polygon id {polygon_uid} to dead letter queue {dead_letter_queue_url}"
+                    f"Moved polygon ids {', '.join(polygon_ids)} to dead letter queue {dead_letter_queue_url}"
                 )
 
-            _log.info(f"Deleting polygon id {polygon_uid} from {ids_sqs_queue_url}...")
+            _log.info(f"Deleting polygon ids {', '.join(polygon_ids)} from {ids_sqs_queue_url}...")
             (
                 successfully_deleted,
                 failed_to_delete,
             ) = delete_batch_with_retry(
                 queue_url=ids_sqs_queue_url,
-                entries=entry_to_delete,
+                entries=entries_to_delete,
                 max_retries=max_retries,
                 sqs_client=sqs_client,
             )
             if failed_to_delete:
-                _log.error(f"Failed to delete {polygon_uid} from queue {ids_sqs_queue_url}")
+                _log.error(
+                    f"Failed to delete {', '.join(polygon_ids)} from queue {ids_sqs_queue_url}"
+                )
                 # raise RuntimeError(f"Failed to delete task: {task}")
             else:
-                _log.info(f"Deleted polygon id {polygon_uid} from {ids_sqs_queue_url}")
+                _log.info(f"Deleted polygon ids {', '.join(polygon_ids)} from {ids_sqs_queue_url}")
