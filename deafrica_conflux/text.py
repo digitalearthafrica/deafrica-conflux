@@ -22,7 +22,7 @@ def make_parquet_file_name(drill_name: str, task_id_string: str) -> str:
     # Parse the task id.
     period, x, y = task_id_string.split("/")
 
-    parquet_file_name = f"{drill_name}_x{x}y{y}_{period}.pq"
+    parquet_file_name = f"{drill_name}_x{x}_y{y}_{period}.pq"
 
     return parquet_file_name
 

@@ -1,3 +1,4 @@
+import collections
 import json
 import logging
 import os
@@ -40,7 +41,7 @@ from deafrica_conflux.io import check_dir_exists, check_file_exists, check_if_s3
     help="Path to the polygons to be rasterised.",
 )
 @click.option(
-    "--numerical-id",
+    "--numeric-id",
     type=str,
     default="WB_ID",
     help="Unique key id in polygons vector file which contains either integers or floats.",
@@ -64,7 +65,7 @@ def rasterise_polygons(
     grid_name,
     product,
     polygons_file_path,
-    numerical_id,
+    numeric_id,
     string_id,
     output_directory,
     overwrite,
@@ -149,19 +150,21 @@ def rasterise_polygons(
     _log.info(f"Polygon count {len(polygons_gdf)}")
 
     # Check the id columns are unique.
-    numerical_id = guess_id_field(input_gdf=polygons_gdf, use_id=numerical_id)
-    assert is_integer_dtype(polygons_gdf[numerical_id]) or is_float_dtype(
-        polygons_gdf[numerical_id]
-    )
+    numeric_id = guess_id_field(input_gdf=polygons_gdf, use_id=numeric_id)
+    assert is_integer_dtype(polygons_gdf[numeric_id]) or is_float_dtype(polygons_gdf[numeric_id])
 
     string_id = guess_id_field(input_gdf=polygons_gdf, use_id=string_id)
     assert is_string_dtype(polygons_gdf[string_id])
 
-    polygon_ids_mapping = dict(zip(polygons_gdf[numerical_id], polygons_gdf[string_id]))
-    polygon_ids_mapping_fp = os.path.join(rasters_output_directory, "polygon_ids_mapping.json")
-    with fs.open(polygon_ids_mapping_fp, "w") as fp:
-        json.dump(polygon_ids_mapping, fp)
-    _log.info(f"Polygos IDs dictionary written to {polygon_ids_mapping_fp}")
+    polygon_numericids_to_stringids = dict(zip(polygons_gdf[numeric_id], polygons_gdf[string_id]))
+    polygon_numericids_to_stringids_fp = os.path.join(
+        rasters_output_directory, "polygon_numericids_to_stringids.json"
+    )
+    with fs.open(polygon_numericids_to_stringids_fp, "w") as fp:
+        json.dump(polygon_numericids_to_stringids, fp)
+    _log.info(
+        f"Polygon numeric IDs (WB_ID) to string IDs (UID) dictionary written to {polygon_numericids_to_stringids_fp}"
+    )
 
     _log.info("Filtering out tiles that do not intersect with any polygon...")
     filtered_tiles_gdf = get_intersecting_polygons(
@@ -174,6 +177,7 @@ def rasterise_polygons(
     tiles = np.array_split(filtered_tiles_gdf, len(filtered_tiles_gdf))
     assert len(tiles) == len(filtered_tiles_gdf)
 
+    polygons_stringids_to_tileids = collections.defaultdict(list)
     for i, tile in enumerate(tiles):
         tile_id = tile["tile_ids"].iloc[0]
         tile_geometry = tile.geometry.iloc[0]
@@ -195,11 +199,13 @@ def rasterise_polygons(
 
             # Get the polygons that intersect with the tile.
             tile_polygons = get_intersecting_polygons(
-                region=tile, polygons_gdf=polygons_gdf, use_id=numerical_id
+                region=tile, polygons_gdf=polygons_gdf, use_id=numeric_id
             )
+            for poly_id in tile_polygons[string_id].to_list():
+                polygons_stringids_to_tileids[poly_id].append(tile_id)
 
             # Rasterise shapes into a numpy array
-            shapes = zip(tile_polygons.geometry, tile_polygons[numerical_id])
+            shapes = zip(tile_polygons.geometry, tile_polygons[numeric_id])
             tile_raster_np = rasterio.features.rasterize(
                 shapes=shapes, out_shape=tile_geobox.shape, transform=tile_geobox.transform
             )
@@ -216,3 +222,12 @@ def rasterise_polygons(
             _log.info(f"Exported raster data to {tile_raster_fp}")
         else:
             _log.info(f"{tile_raster_fp} already exists, skipping...")
+
+    polygons_stringids_to_tileids_fp = os.path.join(
+        rasters_output_directory, "polygons_stringids_to_tileids.json"
+    )
+    with fs.open(polygons_stringids_to_tileids_fp, "w") as fp:
+        json.dump(polygons_stringids_to_tileids, fp)
+    _log.info(
+        f"Polygon string IDs (UID) to tile ids dictionary written to {polygons_stringids_to_tileids_fp}"
+    )

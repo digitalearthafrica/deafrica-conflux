@@ -47,9 +47,9 @@ from deafrica_conflux.plugins.utils import run_plugin, validate_plugin
 )
 @click.option("--output-directory", type=str, help="Directory to write the drill outputs to.")
 @click.option(
-    "--polygon-ids-mapping-file",
+    "--polygon-numericids-to-stringids-file",
     type=str,
-    help="JSON file mapping numerical polygons ids (WB_ID) to string polygons ids (UID).",
+    help="JSON file mapping numeric polygons ids (WB_ID) to string polygons ids (UID).",
 )
 @click.option(
     "--overwrite/--no-overwrite",
@@ -63,7 +63,7 @@ def run_from_txt(
     plugin_name,
     polygons_rasters_directory,
     output_directory,
-    polygon_ids_mapping_file,
+    polygon_numericids_to_stringids_file,
     overwrite,
 ):
     # Set up logger.
@@ -75,8 +75,8 @@ def run_from_txt(
     tasks_text_file = str(tasks_text_file)
     polygons_rasters_directory = str(polygons_rasters_directory)
     output_directory = str(output_directory)
-    if polygon_ids_mapping_file:
-        polygon_ids_mapping_file = str(polygon_ids_mapping_file)
+    if polygon_numericids_to_stringids_file:
+        polygon_numericids_to_stringids_file = str(polygon_numericids_to_stringids_file)
 
     # Read the plugin as a Python module.
     module = import_module(f"deafrica_conflux.plugins.{plugin_name}")
@@ -88,10 +88,10 @@ def run_from_txt(
     # Get the drill name from the plugin
     drill_name = plugin.product_name
 
-    if polygon_ids_mapping_file:
-        if not check_file_exists(polygon_ids_mapping_file):
-            _log.error(f"File {polygon_ids_mapping_file} does not exist!")
-            raise FileNotFoundError(f"File {polygon_ids_mapping_file} does not exist!)")
+    if polygon_numericids_to_stringids_file:
+        if not check_file_exists(polygon_numericids_to_stringids_file):
+            _log.error(f"File {polygon_numericids_to_stringids_file} does not exist!")
+            raise FileNotFoundError(f"File {polygon_numericids_to_stringids_file} does not exist!)")
 
     if not check_dir_exists(polygons_rasters_directory):
         _log.error(f"Directory {polygons_rasters_directory} does not exist!")
@@ -133,16 +133,16 @@ def run_from_txt(
     _log.debug(f"Read {tasks} from file.")
 
     # Read the polygons ids mapping file.
-    if polygon_ids_mapping_file:
-        if check_if_s3_uri(polygon_ids_mapping_file):
+    if polygon_numericids_to_stringids_file:
+        if check_if_s3_uri(polygon_numericids_to_stringids_file):
             fs = fsspec.filesystem("s3")
         else:
             fs = fsspec.filesystem("file")
 
-        with fs.open(polygon_ids_mapping_file) as f:
-            polygon_ids_mapping = json.load(f)
+        with fs.open(polygon_numericids_to_stringids_file) as f:
+            polygon_numericids_to_stringids = json.load(f)
     else:
-        polygon_ids_mapping = {}
+        polygon_numericids_to_stringids = {}
 
     # Connect to the datacube
     dc = datacube.Datacube(app="deafrica-conflux-drill")
@@ -167,7 +167,7 @@ def run_from_txt(
                     task_id_string=task,
                     cache=cache,
                     polygons_rasters_directory=polygons_rasters_directory,
-                    polygon_ids_mapping=polygon_ids_mapping,
+                    polygon_numericids_to_stringids=polygon_numericids_to_stringids,
                     dc=dc,
                 )
 
