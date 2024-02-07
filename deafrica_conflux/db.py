@@ -24,14 +24,30 @@ WaterbodyBase = declarative_base()
 
 
 def get_engine_sqlite(path) -> Engine:
-    """Get a SQLite on-disk database engine."""
-    return create_engine(f"sqlite+pysqlite:///{path}", echo=True, future=True)
+    """
+    Get a SQLite on-disk database engine.
+    """
+    # identifying name of the SQLAlchemy dialect,
+    dialect = "sqlite"
+    # name of the DBAPI to be used to connect to the database
+    driver = "pysqlite"
+    # dialect+driver://username:password@host:port/database
+    # sqlite://<nohostname>/<path>
+    # where <path> is relative:
+    database_url = f"{dialect}+{driver}:///{path}"
+    return create_engine(database_url, echo=True, future=True)
 
 
 def get_engine_inmem() -> Engine:
     """Get a SQLite in-memory database engine."""
+    # identifying name of the SQLAlchemy dialect,
+    dialect = "sqlite"
+    # name of the DBAPI to be used to connect to the database
+    driver = "pysqlite"
+    # dialect+driver://username:password@host:port/database
+    database_url = f"{dialect}+{driver}:///:memory:"
     return create_engine(
-        "sqlite+pysqlite:///:memory:",
+        database_url,
         connect_args={"check_same_thread": False},
         echo=True,
         future=True,
