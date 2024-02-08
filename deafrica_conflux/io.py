@@ -108,6 +108,10 @@ def write_table_to_parquet(
     # "Support" pathlib Paths.
     output_directory = str(output_directory)
 
+    # Add the date to the table.
+    period, x, y = task_id_string.split("/")  # Parse the task id.
+    table["date"] = pd.to_datetime(period)
+
     # Convert the table to pyarrow.
     table_pa = pyarrow.Table.from_pandas(table)
 
@@ -137,7 +141,6 @@ def write_table_to_parquet(
         fs = fsspec.filesystem("file")
 
     # Check if the parent folder exists.
-    period, x, y = task_id_string.split("/")  # Parse the task id.
     parent_folder = os.path.join(output_directory, f"x{x}", f"y{y}")
     if not check_dir_exists(parent_folder):
         fs.makedirs(parent_folder, exist_ok=True)
