@@ -5,12 +5,33 @@ Geoscience Australia
 2021
 """
 
+import json
+import logging
 import os
+from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, create_engine, select
+import fsspec
+import geopandas as gpd
+from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    create_engine,
+    insert,
+    select,
+)
 from sqlalchemy.future import Engine
 from sqlalchemy.orm import Session, declarative_base
 from sqlalchemy.sql.expression import ClauseElement
+
+from deafrica_conflux.id_field import guess_id_field
+from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists
+
+_log = logging.getLogger(__name__)
 
 WaterbodyBase = declarative_base()
 
@@ -135,3 +156,100 @@ def get_or_create(session: Session, model, **kwargs):
         else:
             session.commit()
             return instance, True
+
+
+def add_waterbody_uids(
+    session: Session,
+    model,
+    waterbodies_polygons_fp: str | Path | None = None,
+    polygon_numericids_to_stringids_file: str | Path | None = None,
+):
+    """
+    Add the waterbody polygon UIDs and WB_IDs into the database table.
+
+    Parameters
+    ----------
+    session : Session
+    model : _type_
+        _description_
+    waterbodies_polygons_fp : str | Path | None, optional
+        Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None
+    polygon_numericids_to_stringids_file : str | Path | None, optional
+        Path to the JSON file mapping numeric polygon ids (WB_ID) to string polygon ids (UID), by default None
+
+    Raises
+    ------
+    ValueError
+        _description_
+    FileNotFoundError
+        _description_
+    FileNotFoundError
+        _description_
+    """
+
+    if (polygon_numericids_to_stringids_file and waterbodies_polygons_fp) or (
+        not polygon_numericids_to_stringids_file and not waterbodies_polygons_fp
+    ):
+        raise ValueError(
+            "Please pass either a path to the shapefile/geojson/geoparquet file containing the waterbodies polygons to `waterbodies_polygons_fp` OR the path\
+        to the JSON file mapping numeric polygon ids (WB_ID) to string polygon ids (UID) to `polygon_numericids_to_stringids_file`"
+        )
+    else:
+        if waterbodies_polygons_fp:
+            if not check_file_exists(waterbodies_polygons_fp):
+                _log.error(f"File {waterbodies_polygons_fp} does not exist!")
+                raise FileNotFoundError(f"File {waterbodies_polygons_fp} does not exist!)")
+            else:
+                _, file_extension = os.path.splitext(waterbodies_polygons_fp)
+                if file_extension in PARQUET_EXTENSIONS:
+                    try:
+                        waterbodies = gpd.read_parquet(waterbodies_polygons_fp)
+                    except Exception as error:
+                        _log.error(f"Could not load file {waterbodies_polygons_fp}")
+                        _log.error(error)
+                        raise error
+                else:
+                    try:
+                        waterbodies = gpd.read_file(waterbodies_polygons_fp)
+                    except Exception as error:
+                        _log.error(f"Could not load file {waterbodies_polygons_fp}")
+                        _log.error(error)
+                        raise error
+
+                # Check the id columns are unique.
+                numeric_id = "WB_ID"
+                string_id = "UID"
+                numeric_id = guess_id_field(input_gdf=waterbodies, use_id=numeric_id)
+                assert is_integer_dtype(waterbodies[numeric_id]) or is_float_dtype(
+                    waterbodies[numeric_id]
+                )
+                string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
+                assert is_string_dtype(waterbodies[string_id])
+
+                objects_list = []
+                for row in waterbodies.itertuples():
+                    object_ = dict(wb_id=row.WB_ID, uid=row.UID)
+                    objects_list.append(object_)
+
+        else:
+            if not check_file_exists(polygon_numericids_to_stringids_file):
+                _log.error(f"File {polygon_numericids_to_stringids_file} does not exist!")
+                raise FileNotFoundError(
+                    f"File {polygon_numericids_to_stringids_file} does not exist!)"
+                )
+            else:
+                with fsspec.open(polygon_numericids_to_stringids_file) as f:
+                    polygon_numericids_to_stringids = json.load(f)
+                    objects_list = []
+                    for wb_id, uid in polygon_numericids_to_stringids.items():
+                        object_ = dict(wb_id=wb_id, uid=uid)
+                        objects_list.append(object_)
+        session.begin()
+        try:
+            session.execute(insert(model), objects_list)
+        except Exception:
+            session.rollback()
+            raise
+        else:
+            session.commit()
+        session.close()
