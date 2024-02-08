@@ -25,11 +25,12 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.future import Engine
-from sqlalchemy.orm import Session, declarative_base
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.sql.expression import ClauseElement
+from tqdm import tqdm
 
 from deafrica_conflux.id_field import guess_id_field
-from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists
+from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_table_from_parquet
 
 _log = logging.getLogger(__name__)
 
@@ -158,8 +159,8 @@ def get_or_create(session: Session, model, **kwargs):
             return instance, True
 
 
-def add_waterbody_uids(
-    session: Session,
+def add_waterbody_uids_to_db(
+    engine: Engine,
     model,
     waterbodies_polygons_fp: str | Path | None = None,
     polygon_numericids_to_stringids_file: str | Path | None = None,
@@ -170,21 +171,12 @@ def add_waterbody_uids(
     Parameters
     ----------
     session : Session
-    model : _type_
-        _description_
+    model :
     waterbodies_polygons_fp : str | Path | None, optional
         Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None
     polygon_numericids_to_stringids_file : str | Path | None, optional
         Path to the JSON file mapping numeric polygon ids (WB_ID) to string polygon ids (UID), by default None
 
-    Raises
-    ------
-    ValueError
-        _description_
-    FileNotFoundError
-        _description_
-    FileNotFoundError
-        _description_
     """
 
     if (polygon_numericids_to_stringids_file and waterbodies_polygons_fp) or (
@@ -244,12 +236,89 @@ def add_waterbody_uids(
                     for wb_id, uid in polygon_numericids_to_stringids.items():
                         object_ = dict(wb_id=wb_id, uid=uid)
                         objects_list.append(object_)
-        # session.begin()
-        try:
-            session.execute(insert(model), objects_list)
-        except Exception:
-            session.rollback()
-            raise
-        else:
-            session.commit()
-        # session.close()
+
+        Session = sessionmaker(bind=engine)
+        with Session() as session:
+            session.begin()
+            try:
+                session.execute(insert(model), objects_list)
+            except Exception:
+                session.rollback()
+                raise
+            else:
+                session.commit()
+            session.close()
+
+
+def add_waterbody_observations_to_db(
+    paths: [str],
+    verbose: bool = False,
+    engine: Engine = None,
+    uids: {str} = None,
+    drop: bool = False,
+):
+    """Write drill output parquet files into the waterbodies interstitial DB.
+
+    Arguments
+    ---------
+    paths : [str]
+        List of paths to Parquet files to stack.
+
+    verbose : bool
+
+    engine: sqlalchemy.engine.Engine
+        Database engine. Default postgres, which is
+        connected to if engine=None.
+
+    drop : bool
+        Whether to drop the database. Default False.
+    """
+    if verbose:
+        paths = tqdm(paths)
+
+    # connect to the db
+    if not engine:
+        engine = get_engine_waterbodies()
+
+    # drop tables if requested
+    if drop:
+        drop_waterbody_tables(engine)
+
+    # ensure tables exist
+    create_waterbody_tables(engine)
+
+    for path in paths:
+        # read the table in...
+        df = read_table_from_parquet(path)
+        # parse the date...
+        task_id_string = df.attrs["task_id_string"]
+        # df is ids x bands
+        # for each ID...
+        objects_list = []
+        for row in df.itertuples():
+            obs = dict(
+                obs_id=f"{task_id_string}_{row.Index}",
+                uid=row.Index,
+                px_total=row.px_total,
+                px_wet=row.px_wet,
+                area_wet_m2=row.area_wet_m2,
+                px_dry=row.px_dry,
+                area_dry_m2=row.area_dry_m2,
+                px_invalid=row.px_invalid,
+                area_invalid_m2=row.area_invalid_m2,
+                date=row.date,
+            )
+            objects_list.append(obs)
+        # basically just hoping that these don't exist already
+        # TODO: Insert or update
+        Session = sessionmaker(bind=engine)
+        with Session() as session:
+            session.begin()
+            try:
+                session.execute(insert(WaterbodyObservation), objects_list)
+            except Exception:
+                session.rollback()
+                raise
+            else:
+                session.commit()
+            session.close()
