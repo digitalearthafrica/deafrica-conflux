@@ -244,7 +244,7 @@ def add_waterbody_uids(
                     for wb_id, uid in polygon_numericids_to_stringids.items():
                         object_ = dict(wb_id=wb_id, uid=uid)
                         objects_list.append(object_)
-        session.begin()
+        # session.begin()
         try:
             session.execute(insert(model), objects_list)
         except Exception:
@@ -252,4 +252,4 @@ def add_waterbody_uids(
             raise
         else:
             session.commit()
-        session.close()
+        # session.close()
