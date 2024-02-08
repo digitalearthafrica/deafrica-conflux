@@ -7,23 +7,15 @@ Geoscience Australia
 
 import os
 
-from sqlalchemy import (
-    Column,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    create_engine,
-)
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, create_engine, select
 from sqlalchemy.future import Engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import Session, declarative_base
 from sqlalchemy.sql.expression import ClauseElement
 
 WaterbodyBase = declarative_base()
 
 
-def get_engine_sqlite(path) -> Engine:
+def get_engine_sqlite_file_db(db_file_path) -> Engine:
     """
     Get a SQLite on-disk database engine.
     """
@@ -34,11 +26,11 @@ def get_engine_sqlite(path) -> Engine:
     # dialect+driver://username:password@host:port/database
     # sqlite://<nohostname>/<path>
     # where <path> is relative:
-    database_url = f"{dialect}+{driver}:///{path}"
+    database_url = f"{dialect}+{driver}:///{db_file_path}"
     return create_engine(database_url, echo=True, future=True)
 
 
-def get_engine_inmem() -> Engine:
+def get_engine_sqlite_in_memory_db() -> Engine:
     """Get a SQLite in-memory database engine."""
     # identifying name of the SQLAlchemy dialect,
     dialect = "sqlite"
@@ -62,40 +54,51 @@ def get_engine_waterbodies() -> Engine:
     WATERBODIES_DB_PORT, and WATERBODIES_DB_NAME.
     HOST and PORT default to localhost and 5432 respectively.
     """
-    user = os.environ.get("WATERBODIES_DB_USER")
-    passw = os.environ.get("WATERBODIES_DB_PASS")
+    username = os.environ.get("WATERBODIES_DB_USER")
+    password = os.environ.get("WATERBODIES_DB_PASS")
     host = os.environ.get("WATERBODIES_DB_HOST", "localhost")
     port = os.environ.get("WATERBODIES_DB_PORT", 5432)
-    name = os.environ.get("WATERBODIES_DB_NAME")
-    uri = f"postgresql+psycopg2://{user}:{passw}@{host}:{port}/{name}"
-    return create_engine(uri, future=True)
+    database_name = os.environ.get("WATERBODIES_DB_NAME")
+
+    # identifying name of the SQLAlchemy dialect
+    dialect = "postgresql"
+    # name of the DBAPI to be used to connect to the database
+    driver = "psycopg2"
+    # dialect+driver://username:password@host:port/database
+    database_url = f"{dialect}+{driver}://{username}:{password}@{host}:{port}/{database_name}"
+    return create_engine(database_url, future=True)
 
 
+# Define the table for the waterbodies polygons
 class Waterbody(WaterbodyBase):
+    """Table for the waterbody polygons"""
+
     __tablename__ = "waterbodies"
-    wb_id = Column(Integer, primary_key=True)
-    wb_name = Column(String)  # elsewhere referred to as a "waterbody ID"
-    geofabric_name = Column(String)
-    centroid_lat = Column(Float)
-    centroid_lon = Column(Float)
+    uid = Column(String, primary_key=True)
+    wb_id = Column(Integer)
 
     def __repr__(self):
-        return f"<Waterbody wb_id={self.wb_id}, " + f"wb_name={self.wb_name}, ...>"
+        return f"<Waterbody uid={self.uid}, wb_id={self.wb_id}"
 
 
 class WaterbodyObservation(WaterbodyBase):
+    """Table for the drill outputs"""
+
     __tablename__ = "waterbody_observations"
-    obs_id = Column(Integer, primary_key=True)
-    wb_id = Column(Integer, ForeignKey("waterbodies.wb_id"), index=True)
-    px_wet = Column(Float)  # allows nan
-    pc_wet = Column(Float)
-    pc_missing = Column(Float)
-    platform = Column(String(3))
+    obs_id = Column(String, primary_key=True)
+    uid = Column(String, ForeignKey("waterbodies.uid"), index=True)
+    px_total = Column(Integer)
+    px_wet = Column(Float)
+    area_wet_m2 = Column(Float)
+    px_dry = Column(Float)
+    area_dry_m2 = Column(Float)
+    px_invalid = Column(Float)
+    area_invalid_m2 = Column(Float)
     date = Column(DateTime)
 
     def __repr__(self):
         return (
-            f"<WaterbodyObservation obs_id={self.obs_id}, wb_id={self.wb_id}, "
+            f"<WaterbodyObservation obs_id={self.obs_id}, uid={self.uid}, "
             + f"date={self.date}, ...>"
         )
 
@@ -107,32 +110,28 @@ def create_waterbody_tables(engine: Engine):
 
 def drop_waterbody_tables(engine: Engine):
     """Drop all waterbody tables."""
-    return WaterbodyBase.metadata.drop_all(
-        bind=engine, tables=[Waterbody.__table__, WaterbodyObservation.__table__]
-    )
+    # Drop all tables
+    return WaterbodyBase.metadata.drop_all(bind=engine)
 
 
-def get_or_create(session, model, defaults=None, **kwargs):
+def get_or_create(session: Session, model, **kwargs):
     """Query a row or create it if it doesn't exist."""
-    # https://stackoverflow.com/questions/2546207/
-    # does-sqlalchemy-have-an-equivalent-of-djangos-get-or-create
-    instance = session.query(model).filter_by(**kwargs).one_or_none()
+    instance = session.scalars(select(model).filter_by(**kwargs)).one_or_none()
     if instance:
         return instance, False
     else:
-        params = {k: v for k, v in kwargs.items() if not isinstance(v, ClauseElement)}
-        params.update(defaults or {})
-        instance = model(**params)
+        attributes = {k: v for k, v in kwargs.items() if not isinstance(v, ClauseElement)}
+        instance = model(**attributes)
         try:
             session.add(instance)
-            session.commit()
         # The actual exception depends on the specific database
         # so we catch all exceptions. This is similar to the
         # official documentation:
         # https://docs.sqlalchemy.org/en/latest/orm/session_transaction.html
         except Exception:
             session.rollback()
-            instance = session.query(model).filter_by(**kwargs).one()
+            instance = session.scalars(select(model).filter_by(**kwargs)).one()
             return instance, False
         else:
+            session.commit()
             return instance, True
