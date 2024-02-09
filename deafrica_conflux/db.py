@@ -12,6 +12,7 @@ from pathlib import Path
 
 import fsspec
 import geopandas as gpd
+from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
 from sqlalchemy import (
     Column,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     insert,
     select,
 )
+from sqlalchemy.event import listen
 from sqlalchemy.future import Engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.sql.expression import ClauseElement
@@ -49,7 +51,11 @@ def get_engine_sqlite_file_db(db_file_path) -> Engine:
     # sqlite://<nohostname>/<path>
     # where <path> is relative:
     database_url = f"{dialect}+{driver}:///{db_file_path}"
-    return create_engine(database_url, echo=True, future=True)
+    engine = create_engine(database_url, echo=True, future=True)
+    # listener is responsible for loading the SpatiaLite extension,
+    # which is a necessary operation for using SpatiaLite through SQL.
+    listen(engine, "connect", load_spatialite)
+    return engine
 
 
 def get_engine_sqlite_in_memory_db() -> Engine:
@@ -60,12 +66,16 @@ def get_engine_sqlite_in_memory_db() -> Engine:
     driver = "pysqlite"
     # dialect+driver://username:password@host:port/database
     database_url = f"{dialect}+{driver}:///:memory:"
-    return create_engine(
+    engine = create_engine(
         database_url,
         connect_args={"check_same_thread": False},
         echo=True,
         future=True,
     )
+    # listener is responsible for loading the SpatiaLite extension,
+    # which is a necessary operation for using SpatiaLite through SQL.
+    listen(engine, "connect", load_spatialite)
+    return engine
 
 
 def get_engine_waterbodies() -> Engine:
@@ -159,11 +169,10 @@ def get_or_create(session: Session, model, **kwargs):
             return instance, True
 
 
-def add_waterbody_uids_to_db(
+def add_waterbody_polygons_to_db(
     engine: Engine,
     model,
     waterbodies_polygons_fp: str | Path | None = None,
-    polygon_numericids_to_stringids_file: str | Path | None = None,
 ):
     """
     Add the waterbody polygon UIDs and WB_IDs into the database table.
