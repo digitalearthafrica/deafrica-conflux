@@ -126,9 +126,7 @@ def get_schemas(engine: Engine) -> list[str]:
 
     # List schemas in the database
     schemas = inspector.get_schema_names()
-
-    # Print the list of schemas
-    print(f"Schemas in the database: {schemas}")
+    _log.info(f"Schemas in the database: {', '.join(schemas)}")
 
     return schemas
 
@@ -148,7 +146,7 @@ def list_public_tables(engine: Engine) -> list[str]:
     table_names = inspector.get_table_names(schema="public")
 
     # Print the list of schemas
-    print(f"Tables in the public schema: {table_names}")
+    _log.info(f"Tables in the public schema: {', '.join(table_names)}")
 
     return table_names
 
@@ -158,6 +156,7 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
     metadata = MetaData(schema="public")
 
     # Reflect the table from the database
+    _log.info(f"Finding table {table_name} ...")
     try:
         table = Table(table_name, metadata, autoload_with=engine)
     except NoSuchTableError as error:
@@ -165,6 +164,7 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
         _log.error(f"{table_name} does not exist in database")
         return None
     else:
+        _log.info(f"Table {table_name} found.")
         return table
 
 
@@ -173,6 +173,7 @@ def drop_public_table(engine: Engine, table_name: str):
     metadata = MetaData(schema="public")
 
     # Reflect the table from the database
+    _log.info(f"Dropping table {table_name} ...")
     try:
         table = Table(table_name, metadata, autoload_with=engine)
     except NoSuchTableError as error:
@@ -187,10 +188,10 @@ def drop_public_table(engine: Engine, table_name: str):
         check = inspector.has_table("waterbodies")
 
         if check:
-            _log.error(f"{table_name} not deleted")
+            _log.error(f"{table_name} not dropped")
             raise
         else:
-            _log.info(f"{table_name}  deleted.")
+            _log.info(f"{table_name}  dropped.")
 
 
 def create_waterbody_table(engine: Engine):
