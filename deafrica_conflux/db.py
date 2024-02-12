@@ -12,7 +12,7 @@ from pathlib import Path
 
 import fsspec
 import geopandas as gpd
-from geoalchemy2 import load_spatialite
+from geoalchemy2 import Geometry, load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
 from sqlalchemy import (
     Column,
@@ -101,6 +101,29 @@ def get_engine_waterbodies() -> Engine:
     return create_engine(database_url, future=True)
 
 
+def get_engine_waterbodies_dev_sandbox() -> Engine:
+    """Get the Waterbodies database engine.
+
+    References environment variables WATERBODIES_DB_USER,
+    WATERBODIES_DB_PASS, WATERBODIES_DB_HOST,
+    WATERBODIES_DB_PORT, and WATERBODIES_DB_NAME.
+    HOST and PORT default to localhost and 5432 respectively.
+    """
+    username = os.environ.get("DB_USERNAME")
+    password = os.environ.get("DB_PASSWORD")
+    host = os.environ.get("DB_HOSTNAME", "localhost")
+    port = os.environ.get("DB_PORT", 5432)
+    database_name = os.environ.get("DB_DATABASE")
+
+    # identifying name of the SQLAlchemy dialect
+    dialect = "postgresql"
+    # name of the DBAPI to be used to connect to the database
+    driver = "psycopg2"
+    # dialect+driver://username:password@host:port/database
+    database_url = f"{dialect}+{driver}://{username}:{password}@{host}:{port}/{database_name}"
+    return create_engine(database_url, future=True)
+
+
 # Define the table for the waterbodies polygons
 class Waterbody(WaterbodyBase):
     """Table for the waterbody polygons"""
@@ -108,9 +131,14 @@ class Waterbody(WaterbodyBase):
     __tablename__ = "waterbodies"
     uid = Column(String, primary_key=True)
     wb_id = Column(Integer)
+    area_m2 = Column(Float)
+    length_m = Column(Float)
+    perim_m = Column(Float)
+    timeseries = Column(String)
+    geometry = Column(Geometry(geometry_type="POLYGON"))
 
     def __repr__(self):
-        return f"<Waterbody uid={self.uid}, wb_id={self.wb_id}"
+        return f"<Waterbody uid={self.uid}, wb_id={self.wb_id}, ...>"
 
 
 class WaterbodyObservation(WaterbodyBase):
@@ -179,72 +207,46 @@ def add_waterbody_polygons_to_db(
 
     Parameters
     ----------
-    session : Session
+    engine : engine
     model :
     waterbodies_polygons_fp : str | Path | None, optional
         Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None
-    polygon_numericids_to_stringids_file : str | Path | None, optional
-        Path to the JSON file mapping numeric polygon ids (WB_ID) to string polygon ids (UID), by default None
-
     """
-
-    if (polygon_numericids_to_stringids_file and waterbodies_polygons_fp) or (
-        not polygon_numericids_to_stringids_file and not waterbodies_polygons_fp
-    ):
-        raise ValueError(
-            "Please pass either a path to the shapefile/geojson/geoparquet file containing the waterbodies polygons to `waterbodies_polygons_fp` OR the path\
-        to the JSON file mapping numeric polygon ids (WB_ID) to string polygon ids (UID) to `polygon_numericids_to_stringids_file`"
-        )
+    if not check_file_exists(waterbodies_polygons_fp):
+        _log.error(f"File {waterbodies_polygons_fp} does not exist!")
+        raise FileNotFoundError(f"File {waterbodies_polygons_fp} does not exist!)")
     else:
-        if waterbodies_polygons_fp:
-            if not check_file_exists(waterbodies_polygons_fp):
-                _log.error(f"File {waterbodies_polygons_fp} does not exist!")
-                raise FileNotFoundError(f"File {waterbodies_polygons_fp} does not exist!)")
-            else:
-                _, file_extension = os.path.splitext(waterbodies_polygons_fp)
-                if file_extension in PARQUET_EXTENSIONS:
-                    try:
-                        waterbodies = gpd.read_parquet(waterbodies_polygons_fp)
-                    except Exception as error:
-                        _log.error(f"Could not load file {waterbodies_polygons_fp}")
-                        _log.error(error)
-                        raise error
-                else:
-                    try:
-                        waterbodies = gpd.read_file(waterbodies_polygons_fp)
-                    except Exception as error:
-                        _log.error(f"Could not load file {waterbodies_polygons_fp}")
-                        _log.error(error)
-                        raise error
-
-                # Check the id columns are unique.
-                numeric_id = "WB_ID"
-                string_id = "UID"
-                numeric_id = guess_id_field(input_gdf=waterbodies, use_id=numeric_id)
-                assert is_integer_dtype(waterbodies[numeric_id]) or is_float_dtype(
-                    waterbodies[numeric_id]
-                )
-                string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
-                assert is_string_dtype(waterbodies[string_id])
-
-                objects_list = []
-                for row in waterbodies.itertuples():
-                    object_ = dict(wb_id=row.WB_ID, uid=row.UID)
-                    objects_list.append(object_)
-
+        _, file_extension = os.path.splitext(waterbodies_polygons_fp)
+        if file_extension in PARQUET_EXTENSIONS:
+            try:
+                waterbodies = gpd.read_parquet(waterbodies_polygons_fp)
+            except Exception as error:
+                _log.error(f"Could not load file {waterbodies_polygons_fp}")
+                _log.error(error)
+                raise error
         else:
-            if not check_file_exists(polygon_numericids_to_stringids_file):
-                _log.error(f"File {polygon_numericids_to_stringids_file} does not exist!")
-                raise FileNotFoundError(
-                    f"File {polygon_numericids_to_stringids_file} does not exist!)"
-                )
-            else:
-                with fsspec.open(polygon_numericids_to_stringids_file) as f:
-                    polygon_numericids_to_stringids = json.load(f)
-                    objects_list = []
-                    for wb_id, uid in polygon_numericids_to_stringids.items():
-                        object_ = dict(wb_id=wb_id, uid=uid)
-                        objects_list.append(object_)
+            try:
+                waterbodies = gpd.read_file(waterbodies_polygons_fp)
+            except Exception as error:
+                _log.error(f"Could not load file {waterbodies_polygons_fp}")
+                _log.error(error)
+                raise error
+
+        # Check the id columns are  unique.
+        numeric_id = "WB_ID"
+        string_id = "UID"
+        numeric_id = guess_id_field(input_gdf=waterbodies, use_id=numeric_id)
+        assert is_integer_dtype(waterbodies[numeric_id]) or is_float_dtype(waterbodies[numeric_id])
+        string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
+        assert is_string_dtype(waterbodies[string_id])
+
+        objects_list = []
+        for row in waterbodies.itertuples():
+            object_ = dict(
+                wb_id=row.WB_ID,
+                uid=row.UID,
+            )
+            objects_list.append(object_)
 
         Session = sessionmaker(bind=engine)
         with Session() as session:
