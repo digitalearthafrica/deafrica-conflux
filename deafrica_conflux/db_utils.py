@@ -8,7 +8,7 @@ from sqlalchemy.future import Engine
 
 from deafrica_conflux.db_tables import Waterbody, WaterbodyObservation
 
-_log = logging.Logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 def get_schemas(engine: Engine) -> list[str]:
