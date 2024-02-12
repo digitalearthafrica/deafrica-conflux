@@ -6,7 +6,7 @@ from sqlalchemy import MetaData, Table, inspect
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.future import Engine
 
-from deafrica_conflux.db_tables import Waterbody, WaterbodyBase, WaterbodyObservation
+from deafrica_conflux.db_tables import Waterbody, WaterbodyObservation
 
 _log = logging.Logger(__name__)
 
@@ -59,7 +59,8 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
     try:
         table = Table(table_name, metadata, autoload_with=engine)
     except NoSuchTableError as error:
-        _log.error(error)
+        _log.exception(error)
+        _log.error("f{table_name} does not exist in database")
         return None
     else:
         return table
@@ -93,10 +94,26 @@ def drop_public_table(engine: Engine, table_name: str):
 def create_waterbody_table(engine: Engine):
     # Creating individual tables
     # without affecting any other tables defined in the metadata
-    return Waterbody.__table__.create(engine)
+    Waterbody.__table__.create(engine)
+    table_name = Waterbody.__tablename__
+    table = get_public_table(engine, table_name)
+    return table
+
+
+def delete_waterbody_table(engine: Engine):
+    table_name = Waterbody.__tablename__
+    drop_public_table(table_name)
 
 
 def create_waterbody_obs_table(engine: Engine):
     # Creating individual tables
     # without affecting any other tables defined in the metadata
-    return WaterbodyObservation.__table__.create(engine)
+    WaterbodyObservation.__table__.create(engine)
+    table_name = WaterbodyObservation.__tablename__
+    table = get_public_table(engine, table_name)
+    return table
+
+
+def delete_waterbody_obs_table(engine: Engine):
+    table_name = WaterbodyObservation.__tablename__
+    drop_public_table(table_name)
