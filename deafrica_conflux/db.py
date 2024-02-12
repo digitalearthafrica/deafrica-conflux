@@ -205,7 +205,7 @@ def create_waterbody_table(engine: Engine):
 
 def drop_waterbody_table(engine: Engine):
     table_name = Waterbody.__tablename__
-    drop_public_table(table_name)
+    drop_public_table(engine, table_name)
 
 
 def create_waterbody_obs_table(engine: Engine):
@@ -219,7 +219,7 @@ def create_waterbody_obs_table(engine: Engine):
 
 def drop_waterbody_obs_table(engine: Engine):
     table_name = WaterbodyObservation.__tablename__
-    drop_public_table(table_name)
+    drop_public_table(engine, table_name)
 
 
 def create_all_waterbody_tables(engine: Engine):
