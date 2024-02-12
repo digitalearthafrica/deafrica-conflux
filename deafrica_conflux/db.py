@@ -156,15 +156,15 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
     metadata = MetaData(schema="public")
 
     # Reflect the table from the database
-    _log.info(f"Finding table {table_name} ...")
+    _log.info(f"Finding {table_name} table...")
     try:
         table = Table(table_name, metadata, autoload_with=engine)
     except NoSuchTableError as error:
         _log.exception(error)
-        _log.error(f"{table_name} does not exist in database")
+        _log.error(f"{table_name} table does not exist in database")
         return None
     else:
-        _log.info(f"Table {table_name} found.")
+        _log.info(f"{table_name} table found.")
         return table
 
 
@@ -173,7 +173,7 @@ def drop_public_table(engine: Engine, table_name: str):
     metadata = MetaData(schema="public")
 
     # Reflect the table from the database
-    _log.info(f"Dropping table {table_name} ...")
+    _log.info(f"Dropping {table_name} table...")
     try:
         table = Table(table_name, metadata, autoload_with=engine)
     except NoSuchTableError as error:
@@ -188,10 +188,10 @@ def drop_public_table(engine: Engine, table_name: str):
         check = inspector.has_table(f"{table_name}")
 
         if check:
-            _log.error(f"Table {table_name} not dropped")
+            _log.error(f"{table_name} table not dropped")
             raise
         else:
-            _log.info(f"Table {table_name}  dropped.")
+            _log.info(f"{table_name} table dropped.")
 
 
 def create_waterbody_table(engine: Engine):
@@ -254,6 +254,20 @@ def get_or_create(session: Session, model, **kwargs):
         else:
             session.commit()
             return instance, True
+
+
+def get_polygon_uids_from_db(engine: Engine) -> list:
+    table_name = Waterbody.__tablename__
+    table = get_public_table(engine, table_name)
+
+    Session = sessionmaker(bind=engine)
+    with Session() as session:
+        session.begin()
+        column_values = session.query(table.uid).all()
+        session.close()
+    # Extract values from the query result
+    uids = [value[0] for value in column_values]
+    return uids
 
 
 def add_waterbody_polygons_to_db(
@@ -322,23 +336,44 @@ def add_waterbody_polygons_to_db(
                 )
                 objects_list.append(object_)
 
-            Session = sessionmaker(bind=engine)
-            with Session() as session:
-                session.begin()
-                try:
-                    session.execute(insert(table), objects_list)
-                except Exception:
-                    session.rollback()
-                    raise
-                else:
-                    session.commit()
-                session.close()
         else:
-            # TODO: How to insert if row already exists in table
-            raise NotImplementedError
+            # Ensure the table is present.
+
+            # Get the polygon uids in the database table
+            uids = get_polygon_uids_from_db(engine)
+
+            srid = waterbodies.crs.to_epsg()
+
+            objects_list = []
+            for row in waterbodies.itertuples():
+                if row.UID not in uids:
+                    object_ = dict(
+                        area_m2=row.area_m2,
+                        uid=row.UID,
+                        wb_id=row.WB_ID,
+                        length_m=row.length_m,
+                        perim_m=row.perim_m,
+                        timeseries=row.timeseries,
+                        geometry=shapely.to_wkb(shapely.set_srid(row.geometry, srid=srid)),
+                    )
+                    objects_list.append(object_)
+                else:
+                    continue
+
+        Session = sessionmaker(bind=engine)
+        with Session() as session:
+            session.begin()
+            try:
+                session.execute(insert(table), objects_list)
+            except Exception:
+                session.rollback()
+                raise
+            else:
+                session.commit()
+            session.close()
 
 
-def add_waterbody_observations_to_db(
+def add_waterbody_observations_to_db_from_pq_file(
     paths: list[str],
     verbose: bool = False,
     engine: Engine = None,
