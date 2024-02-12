@@ -60,7 +60,7 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
         table = Table(table_name, metadata, autoload_with=engine)
     except NoSuchTableError as error:
         _log.exception(error)
-        _log.error("f{table_name} does not exist in database")
+        _log.error(f"{table_name} does not exist in database")
         return None
     else:
         return table
@@ -74,7 +74,8 @@ def drop_public_table(engine: Engine, table_name: str):
     try:
         table = Table(table_name, metadata, autoload_with=engine)
     except NoSuchTableError as error:
-        _log.error(error)
+        _log.exception(error)
+        _log.error(f"{table_name} does not exist in database")
     else:
         # Drop the table
         table.drop(engine)
