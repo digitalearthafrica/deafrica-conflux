@@ -185,13 +185,13 @@ def drop_public_table(engine: Engine, table_name: str):
 
         # Check if the table was dropped.
         inspector = inspect(engine)
-        check = inspector.has_table("waterbodies")
+        check = inspector.has_table(f"{table_name}")
 
         if check:
-            _log.error(f"{table_name} not dropped")
+            _log.error(f"Table {table_name} not dropped")
             raise
         else:
-            _log.info(f"{table_name}  dropped.")
+            _log.info(f"Table {table_name}  dropped.")
 
 
 def create_waterbody_table(engine: Engine):
@@ -305,7 +305,7 @@ def add_waterbody_polygons_to_db(
             drop_waterbody_table(engine)
 
             # Create the table
-            table = create_waterbody_obs_table(engine)
+            table = create_waterbody_table(engine)
 
             srid = waterbodies.crs.to_epsg()
 
@@ -334,6 +334,7 @@ def add_waterbody_polygons_to_db(
                     session.commit()
                 session.close()
         else:
+            # TODO: How to insert if row already exists in table
             raise NotImplementedError
 
 
@@ -412,4 +413,5 @@ def add_waterbody_observations_to_db(
                     session.commit()
                 session.close()
     else:
+        # TODO: How to insert if row already exists in table
         raise NotImplementedError
