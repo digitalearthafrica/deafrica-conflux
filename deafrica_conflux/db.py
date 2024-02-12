@@ -10,15 +10,18 @@ import os
 from pathlib import Path
 
 import geopandas as gpd
+import shapely
+from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
-from sqlalchemy import create_engine, insert, select
+from sqlalchemy import MetaData, Table, create_engine, insert, inspect, select
 from sqlalchemy.event import listen
+from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.future import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql.expression import ClauseElement
 from tqdm import tqdm
 
-from deafrica_conflux.db_tables import WaterbodyBase
+from deafrica_conflux.db_tables import Waterbody, WaterbodyBase, WaterbodyObservation
 from deafrica_conflux.id_field import guess_id_field
 from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_table_from_parquet
 
@@ -40,7 +43,7 @@ def get_engine_sqlite_file_db(db_file_path) -> Engine:
     engine = create_engine(database_url, echo=True, future=True)
     # listener is responsible for loading the SpatiaLite extension,
     # which is a necessary operation for using SpatiaLite through SQL.
-    # listen(engine, "connect", load_spatialite)
+    listen(engine, "connect", load_spatialite)
     return engine
 
 
@@ -110,12 +113,120 @@ def get_engine_waterbodies_dev_sandbox() -> Engine:
     return create_engine(database_url, future=True)
 
 
+def get_schemas(engine: Engine) -> list[str]:
+    """List the schemas present in the database.
+
+    Parameters
+    ----------
+    engine : Engine
+        Waterbodies database engine
+    """
+    # Create an inspector
+    inspector = inspect(engine)
+
+    # List schemas in the database
+    schemas = inspector.get_schema_names()
+
+    # Print the list of schemas
+    print(f"Schemas in the database: {schemas}")
+
+    return schemas
+
+
+def list_public_tables(engine: Engine) -> list[str]:
+    """List the tables in present in the public schema of the database.
+
+    Parameters
+    ----------
+    engine : Engine
+        Waterbodies database engine
+    """
+    # Create an inspector
+    inspector = inspect(engine)
+
+    # Get a list of table names in the public schema.
+    table_names = inspector.get_table_names(schema="public")
+
+    # Print the list of schemas
+    print(f"Tables in the public schema: {table_names}")
+
+    return table_names
+
+
+def get_public_table(engine: Engine, table_name: str) -> Table:
+    # Create a metadata object
+    metadata = MetaData(schema="public")
+
+    # Reflect the table from the database
+    try:
+        table = Table(table_name, metadata, autoload_with=engine)
+    except NoSuchTableError as error:
+        _log.exception(error)
+        _log.error(f"{table_name} does not exist in database")
+        return None
+    else:
+        return table
+
+
+def drop_public_table(engine: Engine, table_name: str):
+    # Create a metadata object
+    metadata = MetaData(schema="public")
+
+    # Reflect the table from the database
+    try:
+        table = Table(table_name, metadata, autoload_with=engine)
+    except NoSuchTableError as error:
+        _log.exception(error)
+        _log.error(f"{table_name} does not exist in database")
+    else:
+        # Drop the table
+        table.drop(engine)
+
+        # Check if the table was dropped.
+        inspector = inspect(engine)
+        check = inspector.has_table("waterbodies")
+
+        if check:
+            _log.error(f"{table_name} not deleted")
+            raise
+        else:
+            _log.info(f"{table_name}  deleted.")
+
+
+def create_waterbody_table(engine: Engine):
+    # Creating individual tables
+    # without affecting any other tables defined in the metadata
+    Waterbody.__table__.create(engine)
+    table_name = Waterbody.__tablename__
+    table = get_public_table(engine, table_name)
+    return table
+
+
+def drop_waterbody_table(engine: Engine):
+    table_name = Waterbody.__tablename__
+    drop_public_table(table_name)
+
+
+def create_waterbody_obs_table(engine: Engine):
+    # Creating individual tables
+    # without affecting any other tables defined in the metadata
+    WaterbodyObservation.__table__.create(engine)
+    table_name = WaterbodyObservation.__tablename__
+    table = get_public_table(engine, table_name)
+    return table
+
+
+def drop_waterbody_obs_table(engine: Engine):
+    table_name = WaterbodyObservation.__tablename__
+    drop_public_table(table_name)
+
+
 def create_all_waterbody_tables(engine: Engine):
     """Create all waterbody tables."""
     return WaterbodyBase.metadata.create_all(engine)
 
 
-def drop_waterbody_tables(engine: Engine):
+def drop_all_waterbody_tables(engine: Engine):
     """Drop all waterbody tables."""
     # Drop all tables
     return WaterbodyBase.metadata.drop_all(bind=engine)
@@ -146,18 +257,19 @@ def get_or_create(session: Session, model, **kwargs):
 
 def add_waterbody_polygons_to_db(
     engine: Engine,
-    model,
-    waterbodies_polygons_fp: str | Path | None = None,
+    waterbodies_polygons_fp: str | Path,
+    drop: bool = True,
 ):
     """
-    Add the waterbody polygon UIDs and WB_IDs into the database table.
+    Add the waterbody polygon into the waterbodies table.
 
     Parameters
     ----------
-    engine : engine
-    model :
+    engine : Engine
+    drop : bool, optional
+        If True drop the waterbodies table first and create a new table., by default True
     waterbodies_polygons_fp : str | Path | None, optional
-        Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None
+                Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None, by default None
     """
     if not check_file_exists(waterbodies_polygons_fp):
         _log.error(f"File {waterbodies_polygons_fp} does not exist!")
@@ -166,14 +278,14 @@ def add_waterbody_polygons_to_db(
         _, file_extension = os.path.splitext(waterbodies_polygons_fp)
         if file_extension in PARQUET_EXTENSIONS:
             try:
-                waterbodies = gpd.read_parquet(waterbodies_polygons_fp)
+                waterbodies = gpd.read_parquet(waterbodies_polygons_fp).to_crs("EPSG:4326")
             except Exception as error:
                 _log.error(f"Could not load file {waterbodies_polygons_fp}")
                 _log.error(error)
                 raise error
         else:
             try:
-                waterbodies = gpd.read_file(waterbodies_polygons_fp)
+                waterbodies = gpd.read_file(waterbodies_polygons_fp).to_crs("EPSG:4326")
             except Exception as error:
                 _log.error(f"Could not load file {waterbodies_polygons_fp}")
                 _log.error(error)
@@ -187,29 +299,45 @@ def add_waterbody_polygons_to_db(
         string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
         assert is_string_dtype(waterbodies[string_id])
 
-        objects_list = []
-        for row in waterbodies.itertuples():
-            object_ = dict(
-                wb_id=row.WB_ID,
-                uid=row.UID,
-            )
-            objects_list.append(object_)
+        if drop:
+            # Drop the waterbodies table
+            drop_waterbody_table(engine)
 
-        Session = sessionmaker(bind=engine)
-        with Session() as session:
-            session.begin()
-            try:
-                session.execute(insert(model), objects_list)
-            except Exception:
-                session.rollback()
-                raise
-            else:
-                session.commit()
-            session.close()
+            # Create the table
+            table = create_waterbody_obs_table(engine)
+
+            srid = waterbodies.crs.to_epsg()
+
+            objects_list = []
+            for row in waterbodies.itertuples():
+                object_ = dict(
+                    area_m2=row.area_m2,
+                    uid=row.UID,
+                    wb_id=row.WB_ID,
+                    length_m=row.length_m,
+                    perim_m=row.perim_m,
+                    timeseries=row.timeseries,
+                    geometry=shapely.to_wkb(shapely.set_srid(row.geometry, srid=srid)),
+                )
+                objects_list.append(object_)
+
+            Session = sessionmaker(bind=engine)
+            with Session() as session:
+                session.begin()
+                try:
+                    session.execute(insert(table), objects_list)
+                except Exception:
+                    session.rollback()
+                    raise
+                else:
+                    session.commit()
+                session.close()
+        else:
+            raise NotImplementedError
 
 
 def add_waterbody_observations_to_db(
-    paths: [str],
+    paths: list[str],
     verbose: bool = False,
     engine: Engine = None,
     uids: {str} = None,
@@ -240,43 +368,47 @@ def add_waterbody_observations_to_db(
 
     # drop tables if requested
     if drop:
-        drop_waterbody_tables(engine)
+        # Drop the waterbodies table
+        drop_waterbody_obs_table(engine)
 
-    # ensure tables exist
-    create_waterbody_tables(engine)
+        # Create the table
+        table = create_waterbody_obs_table(engine)
 
-    for path in paths:
-        # read the table in...
-        df = read_table_from_parquet(path)
-        # parse the date...
-        task_id_string = df.attrs["task_id_string"]
-        # df is ids x bands
-        # for each ID...
-        objects_list = []
-        for row in df.itertuples():
-            obs = dict(
-                obs_id=f"{task_id_string}_{row.Index}",
-                uid=row.Index,
-                px_total=row.px_total,
-                px_wet=row.px_wet,
-                area_wet_m2=row.area_wet_m2,
-                px_dry=row.px_dry,
-                area_dry_m2=row.area_dry_m2,
-                px_invalid=row.px_invalid,
-                area_invalid_m2=row.area_invalid_m2,
-                date=row.date,
-            )
-            objects_list.append(obs)
-        # basically just hoping that these don't exist already
-        # TODO: Insert or update
-        Session = sessionmaker(bind=engine)
-        with Session() as session:
-            session.begin()
-            try:
-                session.execute(insert(WaterbodyObservation), objects_list)
-            except Exception:
-                session.rollback()
-                raise
-            else:
-                session.commit()
-            session.close()
+        for path in paths:
+            # read the table in...
+            df = read_table_from_parquet(path)
+            # parse the date...
+            task_id_string = df.attrs["task_id_string"]
+            # df is ids x bands
+            # for each ID...
+            objects_list = []
+            for row in df.itertuples():
+                obs = dict(
+                    obs_id=f"{task_id_string}_{row.Index}",
+                    uid=row.Index,
+                    px_total=row.px_total,
+                    px_wet=row.px_wet,
+                    area_wet_m2=row.area_wet_m2,
+                    px_dry=row.px_dry,
+                    area_dry_m2=row.area_dry_m2,
+                    px_invalid=row.px_invalid,
+                    area_invalid_m2=row.area_invalid_m2,
+                    date=row.date,
+                )
+                objects_list.append(obs)
+            # basically just hoping that these don't exist already
+            # TODO: Insert or update
+            Session = sessionmaker(bind=engine)
+            with Session() as session:
+                session.begin()
+                try:
+                    pass
+                    session.execute(insert(table), objects_list)
+                except Exception:
+                    session.rollback()
+                    raise
+                else:
+                    session.commit()
+                session.close()
+    else:
+        raise NotImplementedError
