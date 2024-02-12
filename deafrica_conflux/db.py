@@ -256,20 +256,6 @@ def get_or_create(session: Session, model, **kwargs):
             return instance, True
 
 
-def get_polygon_uids_from_db(engine: Engine) -> list:
-    table_name = Waterbody.__tablename__
-    table = get_public_table(engine, table_name)
-
-    Session = sessionmaker(bind=engine)
-    with Session() as session:
-        session.begin()
-        column_values = session.query(table.uid).all()
-        session.close()
-    # Extract values from the query result
-    uids = [value[0] for value in column_values]
-    return uids
-
-
 def add_waterbody_polygons_to_db(
     engine: Engine,
     waterbodies_polygons_fp: str | Path,
@@ -332,15 +318,23 @@ def add_waterbody_polygons_to_db(
                     length_m=row.length_m,
                     perim_m=row.perim_m,
                     timeseries=row.timeseries,
-                    geometry=shapely.to_wkb(shapely.set_srid(row.geometry, srid=srid)),
+                    geometry=f"SRID={srid};{row.geometry.wkt}",
                 )
                 objects_list.append(object_)
 
         else:
-            # Ensure the table is present.
+            # Check if the table exists.
+            table_name = Waterbody.__tablename__
+            table = get_public_table(engine, table_name)
 
+            if table is None:
+                # Create the table is it does not.
+                table = create_waterbody_table(engine)
+
+            Session = sessionmaker(bind=engine)
             # Get the polygon uids in the database table
-            uids = get_polygon_uids_from_db(engine)
+            with Session() as session:
+                uids = session.scalars(select(table.c["uid"])).all()
 
             srid = waterbodies.crs.to_epsg()
 
@@ -354,13 +348,12 @@ def add_waterbody_polygons_to_db(
                         length_m=row.length_m,
                         perim_m=row.perim_m,
                         timeseries=row.timeseries,
-                        geometry=shapely.to_wkb(shapely.set_srid(row.geometry, srid=srid)),
+                        geometry=f"SRID={srid};{row.geometry.wkt}",
                     )
                     objects_list.append(object_)
                 else:
                     continue
 
-        Session = sessionmaker(bind=engine)
         with Session() as session:
             session.begin()
             try:
