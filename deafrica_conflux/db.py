@@ -5,38 +5,24 @@ Geoscience Australia
 2021
 """
 
-import json
 import logging
 import os
 from pathlib import Path
 
-import fsspec
 import geopandas as gpd
-from geoalchemy2 import Geometry, load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
-from sqlalchemy import (
-    Column,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    create_engine,
-    insert,
-    select,
-)
+from sqlalchemy import create_engine, insert, select
 from sqlalchemy.event import listen
 from sqlalchemy.future import Engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql.expression import ClauseElement
 from tqdm import tqdm
 
+from deafrica_conflux.db_tables import WaterbodyBase
 from deafrica_conflux.id_field import guess_id_field
 from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_table_from_parquet
 
 _log = logging.getLogger(__name__)
-
-WaterbodyBase = declarative_base()
 
 
 def get_engine_sqlite_file_db(db_file_path) -> Engine:
@@ -54,7 +40,7 @@ def get_engine_sqlite_file_db(db_file_path) -> Engine:
     engine = create_engine(database_url, echo=True, future=True)
     # listener is responsible for loading the SpatiaLite extension,
     # which is a necessary operation for using SpatiaLite through SQL.
-    listen(engine, "connect", load_spatialite)
+    # listen(engine, "connect", load_spatialite)
     return engine
 
 
@@ -124,46 +110,7 @@ def get_engine_waterbodies_dev_sandbox() -> Engine:
     return create_engine(database_url, future=True)
 
 
-# Define the table for the waterbodies polygons
-class Waterbody(WaterbodyBase):
-    """Table for the waterbody polygons"""
-
-    __tablename__ = "waterbodies"
-    uid = Column(String, primary_key=True)
-    wb_id = Column(Integer)
-    area_m2 = Column(Float)
-    length_m = Column(Float)
-    perim_m = Column(Float)
-    timeseries = Column(String)
-    geometry = Column(Geometry(geometry_type="POLYGON"))
-
-    def __repr__(self):
-        return f"<Waterbody uid={self.uid}, wb_id={self.wb_id}, ...>"
-
-
-class WaterbodyObservation(WaterbodyBase):
-    """Table for the drill outputs"""
-
-    __tablename__ = "waterbody_observations"
-    obs_id = Column(String, primary_key=True)
-    uid = Column(String, ForeignKey("waterbodies.uid"), index=True)
-    px_total = Column(Integer)
-    px_wet = Column(Float)
-    area_wet_m2 = Column(Float)
-    px_dry = Column(Float)
-    area_dry_m2 = Column(Float)
-    px_invalid = Column(Float)
-    area_invalid_m2 = Column(Float)
-    date = Column(DateTime)
-
-    def __repr__(self):
-        return (
-            f"<WaterbodyObservation obs_id={self.obs_id}, uid={self.uid}, "
-            + f"date={self.date}, ...>"
-        )
-
-
-def create_waterbody_tables(engine: Engine):
+def create_all_waterbody_tables(engine: Engine):
     """Create all waterbody tables."""
     return WaterbodyBase.metadata.create_all(engine)
 
