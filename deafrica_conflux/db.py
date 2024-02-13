@@ -16,8 +16,7 @@ from sqlalchemy import MetaData, Table, create_engine, insert, inspect, select
 from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.future import Engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.sql.expression import ClauseElement
+from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
 from deafrica_conflux.db_tables import Waterbody, WaterbodyBase, WaterbodyObservation
@@ -173,12 +172,16 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
         return table
 
 
-def drop_public_table(engine: Engine, table_name: str):
-    table = get_public_table(engine, table_name)
+def drop_public_table(engine: Engine, model):
+    table_name = model.__tablename__
+    tables_in_db = list_public_tables(engine)
 
-    if table is not None:
+    if table_name not in tables_in_db:
+        _log.info(f"{table_name} table does not exist./nSkipping drop operation")
+    else:
         # Reflect the table from the database
         _log.info(f"Dropping {table_name} table...")
+        table = get_public_table(engine, table_name)
         try:
             # Drop the table
             table.drop(engine)
@@ -187,36 +190,42 @@ def drop_public_table(engine: Engine, table_name: str):
             _log.error(f"{table_name} table not dropped")
         else:
             _log.info(f"{table_name} table dropped.")
-    else:
-        _log.info("Skipping drop operation...")
 
 
-def create_waterbody_table(engine: Engine, exist_ok=True):
+def create_public_table(engine: Engine, model):
     # Creating individual tables
-    # without affecting any other tables defined in the metadata
-    Waterbody.__table__.create(engine, checkfirst=exist_ok)
-    table_name = Waterbody.__tablename__
+    # without affecting any other tables defined in the metadata.
+
+    table_name = model.__tablename__
+    tables_in_db = list_public_tables(engine)
+
+    if table_name not in tables_in_db:
+        _log.info(f"Creating the {table_name} table ...")
+        model.__table__.create(engine, checkfirst=False)
+        _log.info(f"{table_name} table created")
+    else:
+        _log.info(f"{table_name} table already exists./nSkipping table creation")
+
     table = get_public_table(engine, table_name)
+    return table
+
+
+def create_waterbody_table(engine: Engine):
+    table = create_public_table(engine, Waterbody)
     return table
 
 
 def drop_waterbody_table(engine: Engine):
-    table_name = Waterbody.__tablename__
-    drop_public_table(engine, table_name)
+    drop_public_table(engine, Waterbody)
 
 
-def create_waterbody_obs_table(engine: Engine, exist_ok=True):
-    # Creating individual tables
-    # without affecting any other tables defined in the metadata
-    WaterbodyObservation.__table__.create(engine, checkfirst=exist_ok)
-    table_name = WaterbodyObservation.__tablename__
-    table = get_public_table(engine, table_name)
+def create_waterbody_obs_table(engine: Engine):
+    table = create_public_table(engine, WaterbodyObservation)
     return table
 
 
 def drop_waterbody_obs_table(engine: Engine):
-    table_name = WaterbodyObservation.__tablename__
-    drop_public_table(engine, table_name)
+    drop_public_table(engine, WaterbodyObservation)
 
 
 def create_all_waterbody_tables(engine: Engine):
@@ -228,29 +237,6 @@ def drop_all_waterbody_tables(engine: Engine):
     """Drop all waterbody tables."""
     # Drop all tables
     return WaterbodyBase.metadata.drop_all(bind=engine)
-
-
-def get_or_create(session: Session, model, **kwargs):
-    """Query a row or create it if it doesn't exist."""
-    instance = session.scalars(select(model).filter_by(**kwargs)).one_or_none()
-    if instance:
-        return instance, False
-    else:
-        attributes = {k: v for k, v in kwargs.items() if not isinstance(v, ClauseElement)}
-        instance = model(**attributes)
-        try:
-            session.add(instance)
-        # The actual exception depends on the specific database
-        # so we catch all exceptions. This is similar to the
-        # official documentation:
-        # https://docs.sqlalchemy.org/en/latest/orm/session_transaction.html
-        except Exception:
-            session.rollback()
-            instance = session.scalars(select(model).filter_by(**kwargs)).one()
-            return instance, False
-        else:
-            session.commit()
-            return instance, True
 
 
 def add_waterbody_polygons_to_db(
