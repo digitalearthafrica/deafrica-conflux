@@ -11,6 +11,11 @@ from odc.aws import s3_download
 from rasterio.errors import RasterioIOError
 
 from deafrica_conflux.cli.logs import logging_setup
+from deafrica_conflux.db import (
+    add_waterbody_observations_table_to_db,
+    get_engine_waterbodies,
+    task_obs_exist_in_db,
+)
 from deafrica_conflux.drill import drill
 from deafrica_conflux.io import (
     check_dir_exists,
@@ -51,6 +56,7 @@ from deafrica_conflux.plugins.utils import run_plugin, validate_plugin
     type=str,
     help="JSON file mapping numeric polygons ids (WB_ID) to string polygons ids (UID).",
 )
+@click.option("--db/--no-db", default=True, help="Write to the Waterbodies database.")
 @click.option(
     "--overwrite/--no-overwrite",
     default=False,
@@ -64,6 +70,7 @@ def run_from_txt(
     polygons_rasters_directory,
     output_directory,
     polygon_numericids_to_stringids_file,
+    db,
     overwrite,
 ):
     # Set up logger.
@@ -150,15 +157,21 @@ def run_from_txt(
     # Read the cache file
     cache = dscache.open_ro(cachedb_file_path)
 
+    if db:
+        engine = get_engine_waterbodies()
+
     failed_tasks = []
     for i, task in enumerate(tasks):
         _log.info(f"Processing task {task} ({i + 1}/{len(tasks)})")
 
         if not overwrite:
             _log.info(f"Checking existence of {task}")
-            exists = table_exists(
-                drill_name=drill_name, task_id_string=task, output_directory=output_directory
-            )
+            if db:
+                exists = task_obs_exist_in_db(engine=engine, task_ids_string=task)
+            else:
+                exists = table_exists(
+                    drill_name=drill_name, task_id_string=task, output_directory=output_directory
+                )
         if overwrite or not exists:
             try:
                 # Perform the polygon drill.
@@ -170,13 +183,22 @@ def run_from_txt(
                     polygon_numericids_to_stringids=polygon_numericids_to_stringids,
                     dc=dc,
                 )
-
-                pq_file_name = write_table_to_parquet(  # noqa F841
-                    drill_name=drill_name,
-                    task_id_string=task,
-                    table=table,
-                    output_directory=output_directory,
-                )
+                if db:
+                    add_waterbody_observations_table_to_db(
+                        drill_name=drill_name,
+                        task_id_string=task,
+                        df=table,
+                        engine=engine,
+                        drop_table=False,
+                        replace_duplicate_rows=overwrite,
+                    )
+                else:
+                    pq_file_name = write_table_to_parquet(  # noqa F841
+                        drill_name=drill_name,
+                        task_id_string=task,
+                        table=table,
+                        output_directory=output_directory,
+                    )
             except KeyError as keyerr:
                 _log.exception(f"Found task {task} has KeyError: {str(keyerr)}")
                 failed_tasks = [].append(task)
