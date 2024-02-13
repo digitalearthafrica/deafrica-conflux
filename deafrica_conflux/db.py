@@ -41,7 +41,7 @@ def get_engine_sqlite_file_db(db_file_path) -> Engine:
     engine = create_engine(database_url, echo=True, future=True)
     # listener is responsible for loading the SpatiaLite extension,
     # which is a necessary operation for using SpatiaLite through SQL.
-    listen(engine, "connect", load_spatialite)
+    # listen(engine, "connect", load_spatialite)
     return engine
 
 
@@ -61,7 +61,7 @@ def get_engine_sqlite_in_memory_db() -> Engine:
     )
     # listener is responsible for loading the SpatiaLite extension,
     # which is a necessary operation for using SpatiaLite through SQL.
-    listen(engine, "connect", load_spatialite)
+    # listen(engine, "connect", load_spatialite)
     return engine
 
 
