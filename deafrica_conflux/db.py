@@ -297,6 +297,9 @@ def add_waterbody_polygons_to_db(
         string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
         assert is_string_dtype(waterbodies[string_id])
 
+        # Create a sesssion
+        Session = sessionmaker(bind=engine)
+
         if drop:
             # Drop the waterbodies table
             drop_waterbody_table(engine)
@@ -320,15 +323,9 @@ def add_waterbody_polygons_to_db(
                 objects_list.append(object_)
 
         else:
-            # Check if the table exists.
-            table_name = Waterbody.__tablename__
-            table = get_public_table(engine, table_name)
+            # Ensure table exists.
+            table = create_waterbody_table(engine)
 
-            if table is None:
-                # Create the table is it does not.
-                table = create_waterbody_table(engine)
-
-            Session = sessionmaker(bind=engine)
             # Get the polygon uids in the database table
             with Session() as session:
                 uids = session.scalars(select(table.c["uid"])).all()
