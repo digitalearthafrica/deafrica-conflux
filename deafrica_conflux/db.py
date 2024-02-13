@@ -329,7 +329,7 @@ def add_waterbody_polygons_to_db(
             # Get the polygon uids in the database table
             with Session() as session:
                 uids = session.scalars(select(table.c["uid"])).all()
-
+                _log.info(f"Found {len(uids)} polygon UIDs in the {table.name} table")
             srid = waterbodies.crs.to_epsg()
 
             objects_list = []
@@ -351,6 +351,7 @@ def add_waterbody_polygons_to_db(
         with Session() as session:
             session.begin()
             try:
+                _log.info(f"Adding {len(objects_list)} polygons to {table.name} table")
                 session.execute(insert(table), objects_list)
             except Exception:
                 session.rollback()
