@@ -287,7 +287,7 @@ def check_file_exists(file_path: str | Path) -> bool:
         return False
 
 
-def find_parquet_files(path: str | Path, pattern: str = ".*", verbose: bool = True) -> [str]:
+def find_parquet_files(path: str | Path, pattern: str = ".*", verbose: bool = True) -> list[str]:
     """
     Find Parquet files matching a pattern.
 
@@ -340,7 +340,7 @@ def find_parquet_files(path: str | Path, pattern: str = ".*", verbose: bool = Tr
     return pq_file_paths
 
 
-def find_csv_files(path: str | Path, pattern: str = ".*", verbose: bool = True) -> [str]:
+def find_csv_files(path: str | Path, pattern: str = ".*", verbose: bool = True) -> list[str]:
     """
     Find CSV files matching a pattern.
 
@@ -392,7 +392,7 @@ def find_csv_files(path: str | Path, pattern: str = ".*", verbose: bool = True) 
     return csv_file_paths
 
 
-def find_geotiff_files(path: str | Path, pattern: str = ".*", verbose: bool = True) -> [str]:
+def find_geotiff_files(path: str | Path, pattern: str = ".*", verbose: bool = True) -> list[str]:
     """
     Find GeoTIFF files matching a pattern.
 
