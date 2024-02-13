@@ -297,6 +297,8 @@ def add_waterbody_polygons_to_db(
         string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
         assert is_string_dtype(waterbodies[string_id])
 
+        _log.info(f"Found {len(waterbodies)} polygons in {waterbodies_polygons_fp}")
+
         # Create a sesssion
         Session = sessionmaker(bind=engine)
 
