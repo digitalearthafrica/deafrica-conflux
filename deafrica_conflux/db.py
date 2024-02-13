@@ -204,6 +204,13 @@ def create_table(engine: Engine, model):
     if table_name not in tables_in_db:
         _log.info(f"Creating the {table_name} table ...")
         model.__table__.create(engine, checkfirst=False)
+        # Create a session maker
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        # Commit the transaction (implicitly commits the table creation)
+        session.commit()
+        # Close the session
+        session.close()
         _log.info(f"{table_name} table created")
     else:
         _log.info(f"{table_name} table already exists.\nSkipping table creation")
