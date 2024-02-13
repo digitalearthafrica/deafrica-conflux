@@ -207,7 +207,7 @@ def create_public_table(engine: Engine, model):
         model.__table__.create(engine, checkfirst=False)
         _log.info(f"{table_name} table created")
     else:
-        _log.info(f"{table_name} table already exists./nSkipping table creation")
+        _log.info(f"{table_name} table already exists.\nSkipping table creation")
 
     table = get_public_table(engine, table_name)
     return table
