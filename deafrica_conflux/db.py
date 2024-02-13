@@ -28,6 +28,45 @@ from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_tabl
 _log = logging.getLogger(__name__)
 
 
+def get_engine_sqlite_file_db(db_file_path) -> Engine:
+    """
+    Get a SQLite on-disk database engine.
+    """
+    # identifying name of the SQLAlchemy dialect,
+    dialect = "sqlite"
+    # name of the DBAPI to be used to connect to the database
+    driver = "pysqlite"
+    # dialect+driver://username:password@host:port/database
+    # sqlite://<nohostname>/<path>
+    # where <path> is relative:
+    database_url = f"{dialect}+{driver}:///{db_file_path}"
+    engine = create_engine(database_url, echo=True, future=True)
+    # listener is responsible for loading the SpatiaLite extension,
+    # which is a necessary operation for using SpatiaLite through SQL.
+    # listen(engine, "connect", load_spatialite)
+    return engine
+
+
+def get_engine_sqlite_in_memory_db() -> Engine:
+    """Get a SQLite in-memory database engine."""
+    # identifying name of the SQLAlchemy dialect,
+    dialect = "sqlite"
+    # name of the DBAPI to be used to connect to the database
+    driver = "pysqlite"
+    # dialect+driver://username:password@host:port/database
+    database_url = f"{dialect}+{driver}:///:memory:"
+    engine = create_engine(
+        database_url,
+        connect_args={"check_same_thread": False},
+        echo=True,
+        future=True,
+    )
+    # listener is responsible for loading the SpatiaLite extension,
+    # which is a necessary operation for using SpatiaLite through SQL.
+    # listen(engine, "connect", load_spatialite)
+    return engine
+
+
 def get_engine_waterbodies() -> Engine:
     """Get the Waterbodies database engine.
 
@@ -96,8 +135,8 @@ def list_schemas(engine: Engine) -> list[str]:
     return schemas
 
 
-def list_public_tables(engine: Engine) -> list[str]:
-    """List the tables in present in the public schema of the database.
+def list_tables(engine: Engine) -> list[str]:
+    """List the tables in present.
 
     Parameters
     ----------
@@ -107,22 +146,22 @@ def list_public_tables(engine: Engine) -> list[str]:
     # Create an inspector
     inspector = inspect(engine)
 
-    # Get a list of table names in the public schema.
-    table_names = inspector.get_table_names(schema="public")
+    # Get a list of table names in the schema.
+    table_names = inspector.get_table_names()
 
     # Print the list of schemas
     if table_names:
-        _log.info(f"Tables in the public schema: {', '.join(table_names)}")
+        _log.info(f"Tables found: {', '.join(table_names)}")
     else:
-        _log.info("No tables found in the public schema")
+        _log.info("No tables found.")
 
     return table_names
 
 
-def get_public_table(engine: Engine, table_name: str) -> Table:
-    """Get a table in the public schema using the table name."""
+def get_table(engine: Engine, table_name: str) -> Table:
+    """Get a table using the table name."""
     # Create a metadata object
-    metadata = MetaData(schema="public")
+    metadata = MetaData()
 
     # Reflect the table from the database
     _log.info(f"Finding {table_name} table...")
@@ -136,17 +175,17 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
         return table
 
 
-def drop_public_table(engine: Engine, model):
-    """Drop a table in the public schema"""
+def drop_table(engine: Engine, model):
+    """Drop a table"""
     table_name = model.__tablename__
-    tables_in_db = list_public_tables(engine)
+    tables_in_db = list_tables(engine=engine)
 
     if table_name not in tables_in_db:
-        _log.info(f"{table_name} table does not exist./nSkipping drop operation")
+        _log.info(f"{table_name} table does not exist.\nSkipping drop operation")
     else:
         # Reflect the table from the database
         _log.info(f"Dropping {table_name} table...")
-        table = get_public_table(engine, table_name)
+        table = get_table(engine=engine, table_name=table_name)
         try:
             # Drop the table
             table.drop(engine)
@@ -157,11 +196,10 @@ def drop_public_table(engine: Engine, model):
             _log.info(f"{table_name} table dropped.")
 
 
-def create_public_table(engine: Engine, model):
-    """Create an individual table in the public schema
-    without affecting any other tables defined in the metadata."""
+def create_table(engine: Engine, model):
+    """Create an individual table without affecting any other tables defined in the metadata."""
     table_name = model.__tablename__
-    tables_in_db = list_public_tables(engine)
+    tables_in_db = list_tables(engine=engine)
 
     if table_name not in tables_in_db:
         _log.info(f"Creating the {table_name} table ...")
@@ -170,26 +208,26 @@ def create_public_table(engine: Engine, model):
     else:
         _log.info(f"{table_name} table already exists.\nSkipping table creation")
 
-    table = get_public_table(engine, table_name)
+    table = get_table(engine=engine, table_name=table_name)
     return table
 
 
 def create_waterbody_table(engine: Engine):
-    table = create_public_table(engine, Waterbody)
+    table = create_table(engine=engine, model=Waterbody)
     return table
 
 
 def drop_waterbody_table(engine: Engine):
-    drop_public_table(engine, Waterbody)
+    drop_table(engine=engine, model=Waterbody)
 
 
 def create_waterbody_obs_table(engine: Engine):
-    table = create_public_table(engine, WaterbodyObservation)
+    table = create_table(engine=engine, model=WaterbodyObservation)
     return table
 
 
 def drop_waterbody_obs_table(engine: Engine):
-    drop_public_table(engine, WaterbodyObservation)
+    drop_table(engine=engine, model=WaterbodyObservation)
 
 
 def create_all_waterbody_tables(engine: Engine):
