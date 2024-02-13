@@ -11,10 +11,12 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
-from geoalchemy2 import load_spatialite
+
+# from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
 from sqlalchemy import MetaData, Table, create_engine, delete, insert, inspect, select
-from sqlalchemy.event import listen
+
+# from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.future import Engine
 from sqlalchemy.orm import sessionmaker
@@ -111,7 +113,7 @@ def get_engine_waterbodies_dev_sandbox() -> Engine:
     return create_engine(database_url, future=True)
 
 
-def get_schemas(engine: Engine) -> list[str]:
+def list_schemas(engine: Engine) -> list[str]:
     """List the schemas present in the database.
 
     Parameters
@@ -393,7 +395,7 @@ def add_waterbody_polygons_to_db(
                     session.commit()
                 session.close()
         else:
-            _log.error("No polygons to add to the {table.name} table")
+            _log.error(f"No polygons to add to the {table.name} table")
 
 
 def add_waterbody_observations_pq_file_to_db(
@@ -548,7 +550,7 @@ def add_waterbody_observations_pq_file_to_db(
                 session.commit()
             session.close()
     else:
-        _log.error("No observations to add to the {table.name} table")
+        _log.error(f"No observations to add to the {table.name} table")
 
 
 def add_waterbody_observations_table_to_db(
@@ -696,4 +698,24 @@ def add_waterbody_observations_table_to_db(
                 session.commit()
             session.close()
     else:
-        _log.error("No observations to add to the {table.name} table")
+        _log.error(f"No observations to add to the {table.name} table")
+
+
+def task_obs_exist_in_db(engine: Engine, task_ids_string: str) -> bool:
+    """Check if observations for the task id exist in the waterbodies observations table."""
+    Session = sessionmaker(bind=engine)
+
+    # Ensure table exists.
+    table = create_waterbody_obs_table(engine)
+
+    with Session() as session:
+        observations = session.scalars(
+            select(table).where(table.c.obs_id.like(f"%{task_ids_string}%"))
+        ).all()
+
+    if observations:
+        _log.info(f"Observations for task {task_ids_string} exist in the {table.name} table")
+        return True
+    else:
+        _log.info(f"Observations for task {task_ids_string} do not exist in the {table.name} table")
+        return False
