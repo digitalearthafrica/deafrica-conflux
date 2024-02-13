@@ -367,7 +367,7 @@ def add_waterbody_polygons_to_db(
                     _log.info(
                         f"Deleting {len(uids_to_delete)} polygons from the {table.name} table"
                     )
-                    delete_stmt = delete(table).where(table.uid.in_(uids_to_delete))
+                    delete_stmt = delete(table).where(table.c.uid.in_(uids_to_delete))
                     session.execute(delete_stmt)
                 except Exception:
                     session.rollback()
