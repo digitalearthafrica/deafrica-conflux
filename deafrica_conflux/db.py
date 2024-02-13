@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 
 import geopandas as gpd
-import shapely
 from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
 from sqlalchemy import MetaData, Table, create_engine, insert, inspect, select
@@ -126,7 +125,11 @@ def get_schemas(engine: Engine) -> list[str]:
 
     # List schemas in the database
     schemas = inspector.get_schema_names()
-    _log.info(f"Schemas in the database: {', '.join(schemas)}")
+
+    if schemas:
+        _log.info(f"Schemas in the database: {', '.join(schemas)}")
+    else:
+        _log.info("No schemas found in database")
 
     return schemas
 
@@ -146,7 +149,10 @@ def list_public_tables(engine: Engine) -> list[str]:
     table_names = inspector.get_table_names(schema="public")
 
     # Print the list of schemas
-    _log.info(f"Tables in the public schema: {', '.join(table_names)}")
+    if table_names:
+        _log.info(f"Tables in the public schema: {', '.join(table_names)}")
+    else:
+        _log.info("No tables found in the public schema")
 
     return table_names
 
@@ -159,9 +165,8 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
     _log.info(f"Finding {table_name} table...")
     try:
         table = Table(table_name, metadata, autoload_with=engine)
-    except NoSuchTableError as error:
-        _log.exception(error)
-        _log.error(f"{table_name} table does not exist in database")
+    except NoSuchTableError:
+        _log.error(f"{table_name} table does not exist in database!")
         return None
     else:
         _log.info(f"{table_name} table found.")
@@ -169,35 +174,27 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
 
 
 def drop_public_table(engine: Engine, table_name: str):
-    # Create a metadata object
-    metadata = MetaData(schema="public")
+    table = get_public_table(engine, table_name)
 
-    # Reflect the table from the database
-    _log.info(f"Dropping {table_name} table...")
-    try:
-        table = Table(table_name, metadata, autoload_with=engine)
-    except NoSuchTableError as error:
-        _log.exception(error)
-        _log.error(f"{table_name} does not exist in database")
-    else:
-        # Drop the table
-        table.drop(engine)
-
-        # Check if the table was dropped.
-        inspector = inspect(engine)
-        check = inspector.has_table(f"{table_name}")
-
-        if check:
+    if table is not None:
+        # Reflect the table from the database
+        _log.info(f"Dropping {table_name} table...")
+        try:
+            # Drop the table
+            table.drop(engine)
+        except Exception as error:  # using a catch all
+            _log.exception(error)
             _log.error(f"{table_name} table not dropped")
-            raise
         else:
             _log.info(f"{table_name} table dropped.")
+    else:
+        _log.info("Skipping drop operation...")
 
 
-def create_waterbody_table(engine: Engine):
+def create_waterbody_table(engine: Engine, exist_ok=True):
     # Creating individual tables
     # without affecting any other tables defined in the metadata
-    Waterbody.__table__.create(engine)
+    Waterbody.__table__.create(engine, checkfirst=exist_ok)
     table_name = Waterbody.__tablename__
     table = get_public_table(engine, table_name)
     return table
@@ -208,10 +205,10 @@ def drop_waterbody_table(engine: Engine):
     drop_public_table(engine, table_name)
 
 
-def create_waterbody_obs_table(engine: Engine):
+def create_waterbody_obs_table(engine: Engine, exist_ok=True):
     # Creating individual tables
     # without affecting any other tables defined in the metadata
-    WaterbodyObservation.__table__.create(engine)
+    WaterbodyObservation.__table__.create(engine, checkfirst=exist_ok)
     table_name = WaterbodyObservation.__tablename__
     table = get_public_table(engine, table_name)
     return table
