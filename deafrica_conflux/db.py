@@ -17,7 +17,6 @@ from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.future import Engine
 from sqlalchemy.orm import sessionmaker
-from tqdm import tqdm
 
 from deafrica_conflux.db_tables import Waterbody, WaterbodyBase, WaterbodyObservation
 from deafrica_conflux.id_field import guess_id_field
@@ -116,8 +115,8 @@ def get_schemas(engine: Engine) -> list[str]:
 
     Parameters
     ----------
-    engine : Engine
-        Waterbodies database engine
+    engine: sqlalchemy.engine.Engine
+        Database engine.
     """
     # Create an inspector
     inspector = inspect(engine)
@@ -138,8 +137,8 @@ def list_public_tables(engine: Engine) -> list[str]:
 
     Parameters
     ----------
-    engine : Engine
-        Waterbodies database engine
+    engine: sqlalchemy.engine.Engine
+        Database engine.
     """
     # Create an inspector
     inspector = inspect(engine)
@@ -157,6 +156,7 @@ def list_public_tables(engine: Engine) -> list[str]:
 
 
 def get_public_table(engine: Engine, table_name: str) -> Table:
+    """Get a table in the public schema using the table name."""
     # Create a metadata object
     metadata = MetaData(schema="public")
 
@@ -173,6 +173,7 @@ def get_public_table(engine: Engine, table_name: str) -> Table:
 
 
 def drop_public_table(engine: Engine, model):
+    """Drop a table in the public schema"""
     table_name = model.__tablename__
     tables_in_db = list_public_tables(engine)
 
@@ -193,9 +194,8 @@ def drop_public_table(engine: Engine, model):
 
 
 def create_public_table(engine: Engine, model):
-    # Creating individual tables
-    # without affecting any other tables defined in the metadata.
-
+    """Create an individual table in the public schema
+    without affecting any other tables defined in the metadata."""
     table_name = model.__tablename__
     tables_in_db = list_public_tables(engine)
 
@@ -255,6 +255,10 @@ def add_waterbody_polygons_to_db(
     waterbodies_polygons_fp : str | Path | None, optional
                 Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None, by default None
     """
+    # connect to the db
+    if not engine:
+        engine = get_engine_waterbodies()
+
     if not check_file_exists(waterbodies_polygons_fp):
         _log.error(f"File {waterbodies_polygons_fp} does not exist!")
         raise FileNotFoundError(f"File {waterbodies_polygons_fp} does not exist!)")
@@ -351,9 +355,7 @@ def add_waterbody_polygons_to_db(
 
 def add_waterbody_observations_to_db_from_pq_file(
     paths: list[str],
-    verbose: bool = False,
     engine: Engine = None,
-    uids: {str} = None,
     drop: bool = False,
 ):
     """Write drill output parquet files into the waterbodies interstitial DB.
@@ -363,8 +365,6 @@ def add_waterbody_observations_to_db_from_pq_file(
     paths : [str]
         List of paths to Parquet files to stack.
 
-    verbose : bool
-
     engine: sqlalchemy.engine.Engine
         Database engine. Default postgres, which is
         connected to if engine=None.
@@ -372,57 +372,108 @@ def add_waterbody_observations_to_db_from_pq_file(
     drop : bool
         Whether to drop the database. Default False.
     """
-    if verbose:
-        paths = tqdm(paths)
-
     # connect to the db
     if not engine:
         engine = get_engine_waterbodies()
 
+    # Create a sesssion
+    Session = sessionmaker(bind=engine)
+
     # drop tables if requested
     if drop:
-        # Drop the waterbodies table
+        # Drop the waterbodies observations table
         drop_waterbody_obs_table(engine)
 
         # Create the table
         table = create_waterbody_obs_table(engine)
 
-        for path in paths:
-            # read the table in...
-            df = read_table_from_parquet(path)
-            # parse the date...
-            task_id_string = df.attrs["task_id_string"]
-            # df is ids x bands
-            # for each ID...
-            objects_list = []
-            for row in df.itertuples():
-                obs = dict(
-                    obs_id=f"{task_id_string}_{row.Index}",
-                    uid=row.Index,
-                    px_total=row.px_total,
-                    px_wet=row.px_wet,
-                    area_wet_m2=row.area_wet_m2,
-                    px_dry=row.px_dry,
-                    area_dry_m2=row.area_dry_m2,
-                    px_invalid=row.px_invalid,
-                    area_invalid_m2=row.area_invalid_m2,
-                    date=row.date,
-                )
-                objects_list.append(obs)
-            # basically just hoping that these don't exist already
-            # TODO: Insert or update
-            Session = sessionmaker(bind=engine)
-            with Session() as session:
-                session.begin()
-                try:
-                    pass
-                    session.execute(insert(table), objects_list)
-                except Exception:
-                    session.rollback()
-                    raise
-                else:
-                    session.commit()
-                session.close()
+        for idx, path in enumerate(paths):
+            _log.info(f"Adding file {path}: {idx+1} / {len(paths)}")
+            # Check if the file exists.
+            if not check_file_exists(path):
+                _log.error(f"File {path} does not exist!")
+                continue
+            else:
+                # read the table in...
+                df = read_table_from_parquet(path)
+                # parse the date...
+                task_id_string = df.attrs["task_id_string"]
+
+                objects_list = []
+                for row in df.itertuples():
+                    obs = dict(
+                        obs_id=f"{task_id_string}_{row.Index}",
+                        uid=row.Index,
+                        px_total=row.px_total,
+                        px_wet=row.px_wet,
+                        area_wet_m2=row.area_wet_m2,
+                        px_dry=row.px_dry,
+                        area_dry_m2=row.area_dry_m2,
+                        px_invalid=row.px_invalid,
+                        area_invalid_m2=row.area_invalid_m2,
+                        date=row.date,
+                    )
+                    objects_list.append(obs)
+
+                with Session() as session:
+                    session.begin()
+                    try:
+                        _log.info(f"Adding {len(objects_list)} observations to {table.name} table")
+                        session.execute(insert(table), objects_list)
+                    except Exception:
+                        session.rollback()
+                        raise
+                    else:
+                        session.commit()
+                    session.close()
     else:
-        # TODO: How to insert if row already exists in table
-        raise NotImplementedError
+        # Ensure table exists.
+        table = create_waterbody_obs_table(engine)
+
+        # Get the observation ids in the database table
+        with Session() as session:
+            obs_ids = session.scalars(select(table.c["obs_id"])).all()
+            _log.info(f"Found {len(obs_ids)} observations in the {table.name} table")
+
+        for idx, path in enumerate(paths):
+            _log.info(f"Adding file {path}: {idx+1} / {len(paths)}")
+            # Check if the file exists.
+            if not check_file_exists(path):
+                _log.error(f"File {path} does not exist!")
+                continue
+            else:
+                # read the table in...
+                df = read_table_from_parquet(path)
+                # parse the date...
+                task_id_string = df.attrs["task_id_string"]
+
+                objects_list = []
+                for row in df.itertuples():
+                    if f"{task_id_string}_{row.Index}" not in obs_ids:
+                        obs = dict(
+                            obs_id=f"{task_id_string}_{row.Index}",
+                            uid=row.Index,
+                            px_total=row.px_total,
+                            px_wet=row.px_wet,
+                            area_wet_m2=row.area_wet_m2,
+                            px_dry=row.px_dry,
+                            area_dry_m2=row.area_dry_m2,
+                            px_invalid=row.px_invalid,
+                            area_invalid_m2=row.area_invalid_m2,
+                            date=row.date,
+                        )
+                        objects_list.append(obs)
+                    else:
+                        continue
+
+                with Session() as session:
+                    session.begin()
+                    try:
+                        _log.info(f"Adding {len(objects_list)} observations to {table.name} table")
+                        session.execute(insert(table), objects_list)
+                    except Exception:
+                        session.rollback()
+                        raise
+                    else:
+                        session.commit()
+                    session.close()
