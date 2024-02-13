@@ -10,9 +10,10 @@ import os
 from pathlib import Path
 
 import geopandas as gpd
+import pandas as pd
 from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
-from sqlalchemy import MetaData, Table, create_engine, insert, inspect, select
+from sqlalchemy import MetaData, Table, create_engine, delete, insert, inspect, select
 from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.future import Engine
@@ -242,7 +243,8 @@ def drop_all_waterbody_tables(engine: Engine):
 def add_waterbody_polygons_to_db(
     engine: Engine,
     waterbodies_polygons_fp: str | Path,
-    drop: bool = True,
+    drop_table: bool = True,
+    replace_duplicate_rows=True,
 ):
     """
     Add the waterbody polygon into the waterbodies table.
@@ -250,8 +252,11 @@ def add_waterbody_polygons_to_db(
     Parameters
     ----------
     engine : Engine
-    drop : bool, optional
+    drop_table : bool, optional
         If True drop the waterbodies table first and create a new table., by default True
+    replace_duplicate_rows : bool, optional
+        If True if the polygon uid already exists in the waterbodies table, it will be replaced,
+        else it will be skipped.
     waterbodies_polygons_fp : str | Path | None, optional
                 Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None, by default None
     """
@@ -292,7 +297,10 @@ def add_waterbody_polygons_to_db(
         # Create a sesssion
         Session = sessionmaker(bind=engine)
 
-        if drop:
+        uids_to_delete = []
+        insert_objects_list = []
+
+        if drop_table:
             # Drop the waterbodies table
             drop_waterbody_table(engine)
 
@@ -301,7 +309,6 @@ def add_waterbody_polygons_to_db(
 
             srid = waterbodies.crs.to_epsg()
 
-            objects_list = []
             for row in waterbodies.itertuples():
                 object_ = dict(
                     area_m2=row.area_m2,
@@ -312,19 +319,19 @@ def add_waterbody_polygons_to_db(
                     timeseries=row.timeseries,
                     geometry=f"SRID={srid};{row.geometry.wkt}",
                 )
-                objects_list.append(object_)
+                insert_objects_list.append(object_)
 
         else:
             # Ensure table exists.
             table = create_waterbody_table(engine)
 
             # Get the polygon uids in the database table
+            # Note: Getting them all in a list works fine for about 700,000 polygons.
             with Session() as session:
                 uids = session.scalars(select(table.c["uid"])).all()
                 _log.info(f"Found {len(uids)} polygon UIDs in the {table.name} table")
             srid = waterbodies.crs.to_epsg()
 
-            objects_list = []
             for row in waterbodies.itertuples():
                 if row.UID not in uids:
                     object_ = dict(
@@ -336,144 +343,52 @@ def add_waterbody_polygons_to_db(
                         timeseries=row.timeseries,
                         geometry=f"SRID={srid};{row.geometry.wkt}",
                     )
-                    objects_list.append(object_)
+                    insert_objects_list.append(object_)
                 else:
-                    continue
-
-        with Session() as session:
-            session.begin()
-            try:
-                _log.info(f"Adding {len(objects_list)} polygons to {table.name} table")
-                session.execute(insert(table), objects_list)
-            except Exception:
-                session.rollback()
-                raise
-            else:
-                session.commit()
-            session.close()
-
-
-def add_waterbody_observations_to_db_from_pq_file(
-    paths: list[str],
-    engine: Engine = None,
-    drop: bool = False,
-):
-    """Write drill output parquet files into the waterbodies interstitial DB.
-
-    Arguments
-    ---------
-    paths : [str]
-        List of paths to Parquet files to stack.
-
-    engine: sqlalchemy.engine.Engine
-        Database engine. Default postgres, which is
-        connected to if engine=None.
-
-    drop : bool
-        Whether to drop the database. Default False.
-    """
-    # connect to the db
-    if not engine:
-        engine = get_engine_waterbodies()
-
-    # Create a sesssion
-    Session = sessionmaker(bind=engine)
-
-    # drop tables if requested
-    if drop:
-        # Drop the waterbodies observations table
-        drop_waterbody_obs_table(engine)
-
-        # Create the table
-        table = create_waterbody_obs_table(engine)
-
-        for idx, path in enumerate(paths):
-            _log.info(f"Adding file {path}: {idx+1} / {len(paths)}")
-            # Check if the file exists.
-            if not check_file_exists(path):
-                _log.error(f"File {path} does not exist!")
-                continue
-            else:
-                # read the table in...
-                df = read_table_from_parquet(path)
-                # parse the date...
-                task_id_string = df.attrs["task_id_string"]
-
-                objects_list = []
-                for row in df.itertuples():
-                    obs = dict(
-                        obs_id=f"{task_id_string}_{row.Index}",
-                        uid=row.Index,
-                        px_total=row.px_total,
-                        px_wet=row.px_wet,
-                        area_wet_m2=row.area_wet_m2,
-                        px_dry=row.px_dry,
-                        area_dry_m2=row.area_dry_m2,
-                        px_invalid=row.px_invalid,
-                        area_invalid_m2=row.area_invalid_m2,
-                        date=row.date,
-                    )
-                    objects_list.append(obs)
-
-                with Session() as session:
-                    session.begin()
-                    try:
-                        _log.info(f"Adding {len(objects_list)} observations to {table.name} table")
-                        session.execute(insert(table), objects_list)
-                    except Exception:
-                        session.rollback()
-                        raise
-                    else:
-                        session.commit()
-                    session.close()
-    else:
-        # Ensure table exists.
-        table = create_waterbody_obs_table(engine)
-
-        # Get the observation ids in the database table
-        with Session() as session:
-            obs_ids = session.scalars(select(table.c["obs_id"])).all()
-            _log.info(f"Found {len(obs_ids)} observations in the {table.name} table")
-
-        for idx, path in enumerate(paths):
-            _log.info(f"Adding file {path}: {idx+1} / {len(paths)}")
-            # Check if the file exists.
-            if not check_file_exists(path):
-                _log.error(f"File {path} does not exist!")
-                continue
-            else:
-                # read the table in...
-                df = read_table_from_parquet(path)
-                # parse the date...
-                task_id_string = df.attrs["task_id_string"]
-
-                objects_list = []
-                for row in df.itertuples():
-                    if f"{task_id_string}_{row.Index}" not in obs_ids:
-                        obs = dict(
-                            obs_id=f"{task_id_string}_{row.Index}",
-                            uid=row.Index,
-                            px_total=row.px_total,
-                            px_wet=row.px_wet,
-                            area_wet_m2=row.area_wet_m2,
-                            px_dry=row.px_dry,
-                            area_dry_m2=row.area_dry_m2,
-                            px_invalid=row.px_invalid,
-                            area_invalid_m2=row.area_invalid_m2,
-                            date=row.date,
+                    if replace_duplicate_rows:
+                        uids_to_delete.append(row.UID)
+                        object_ = dict(
+                            area_m2=row.area_m2,
+                            uid=row.UID,
+                            wb_id=row.WB_ID,
+                            length_m=row.length_m,
+                            perim_m=row.perim_m,
+                            timeseries=row.timeseries,
+                            geometry=f"SRID={srid};{row.geometry.wkt}",
                         )
-                        objects_list.append(obs)
+                        insert_objects_list.append(object_)
                     else:
                         continue
 
-                with Session() as session:
-                    session.begin()
-                    try:
-                        _log.info(f"Adding {len(objects_list)} observations to {table.name} table")
-                        session.execute(insert(table), objects_list)
-                    except Exception:
-                        session.rollback()
-                        raise
-                    else:
-                        session.commit()
-                    session.close()
+        if uids_to_delete:
+            with Session() as session:
+                session.begin()
+                try:
+                    _log.info(
+                        f"Deleting {len(uids_to_delete)} polygons from the {table.name} table"
+                    )
+                    delete_stmt = delete(table).where(table.uid.in_(uids_to_delete))
+                    session.execute(delete_stmt)
+                except Exception:
+                    session.rollback()
+                    raise
+                else:
+                    session.commit()
+                session.close()
+        else:
+            pass
+
+        if insert_objects_list:
+            with Session() as session:
+                session.begin()
+                try:
+                    _log.info(f"Adding {len(insert_objects_list)} polygons to {table.name} table")
+                    session.execute(insert(table), insert_objects_list)
+                except Exception:
+                    session.rollback()
+                    raise
+                else:
+                    session.commit()
+                session.close()
+        else:
+            _log.error("No polygons to add to the {table.name} table")
