@@ -28,45 +28,6 @@ from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_tabl
 _log = logging.getLogger(__name__)
 
 
-def get_engine_sqlite_file_db(db_file_path) -> Engine:
-    """
-    Get a SQLite on-disk database engine.
-    """
-    # identifying name of the SQLAlchemy dialect,
-    dialect = "sqlite"
-    # name of the DBAPI to be used to connect to the database
-    driver = "pysqlite"
-    # dialect+driver://username:password@host:port/database
-    # sqlite://<nohostname>/<path>
-    # where <path> is relative:
-    database_url = f"{dialect}+{driver}:///{db_file_path}"
-    engine = create_engine(database_url, echo=True, future=True)
-    # listener is responsible for loading the SpatiaLite extension,
-    # which is a necessary operation for using SpatiaLite through SQL.
-    # listen(engine, "connect", load_spatialite)
-    return engine
-
-
-def get_engine_sqlite_in_memory_db() -> Engine:
-    """Get a SQLite in-memory database engine."""
-    # identifying name of the SQLAlchemy dialect,
-    dialect = "sqlite"
-    # name of the DBAPI to be used to connect to the database
-    driver = "pysqlite"
-    # dialect+driver://username:password@host:port/database
-    database_url = f"{dialect}+{driver}:///:memory:"
-    engine = create_engine(
-        database_url,
-        connect_args={"check_same_thread": False},
-        echo=True,
-        future=True,
-    )
-    # listener is responsible for loading the SpatiaLite extension,
-    # which is a necessary operation for using SpatiaLite through SQL.
-    # listen(engine, "connect", load_spatialite)
-    return engine
-
-
 def get_engine_waterbodies() -> Engine:
     """Get the Waterbodies database engine.
 
