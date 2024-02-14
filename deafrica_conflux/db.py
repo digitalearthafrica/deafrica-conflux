@@ -336,8 +336,8 @@ def add_waterbody_polygons_to_db(
             for row in waterbodies.itertuples():
                 if row.UID not in uids:
                     object_ = dict(
-                        area_m2=row.area_m2,
                         uid=row.UID,
+                        area_m2=row.area_m2,
                         wb_id=row.WB_ID,
                         length_m=row.length_m,
                         perim_m=row.perim_m,
@@ -348,8 +348,8 @@ def add_waterbody_polygons_to_db(
                 else:
                     if replace_duplicate_rows:
                         object_ = dict(
+                            uid=row.UID,
                             area_m2=row.area_m2,
-                            # uid=row.UID,
                             wb_id=row.WB_ID,
                             length_m=row.length_m,
                             perim_m=row.perim_m,
