@@ -14,7 +14,7 @@ import pandas as pd
 
 # from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
-from sqlalchemy import MetaData, Table, create_engine, update, insert, inspect, select
+from sqlalchemy import MetaData, Table, create_engine, delete, insert, inspect, select
 
 # from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
@@ -298,8 +298,8 @@ def add_waterbody_polygons_to_db(
         # Create a sesssion
         Session = sessionmaker(bind=engine)
 
+        uids_to_delete = []
         insert_objects_list = []
-        update_objects_list = []
         if drop_table:
             # Drop the waterbodies table
             drop_waterbody_table(engine)
@@ -347,8 +347,9 @@ def add_waterbody_polygons_to_db(
                     insert_objects_list.append(object_)
                 else:
                     if replace_duplicate_rows:
+                        uids_to_delete.append(row.UID)
                         object_ = dict(
-                            id=row.UID,
+                            uid=row.UID,
                             area_m2=row.area_m2,
                             wb_id=row.WB_ID,
                             length_m=row.length_m,
@@ -356,26 +357,26 @@ def add_waterbody_polygons_to_db(
                             timeseries=row.timeseries,
                             geometry=f"SRID={srid};{row.geometry.wkt}",
                         )
-                        update_objects_list.append(object_)
+                        insert_objects_list.append(object_)
                     else:
                         continue
 
-        if update_objects_list:
+        if uids_to_delete:
             with Session() as session:
                 session.begin()
                 try:
                     _log.info(
-                        f"Updating {len(update_objects_list)} polygons in the {table.name} table"
+                        f"Deleting {len(uids_to_delete)} polygons from the {table.name} table"
                     )
-                    session.execute(update(table), update_objects_list)
-                except Exception as error :
+                    session.execute(delete(table).where(table.c.uid.in_(uids_to_delete)))
+                except Exception as error:
                     session.rollback()
                     _log.exception(error)
-                    _log.error("Update operation failed")
+                    _log.error("Delete operation failed")
                 else:
                     session.commit()
                 session.close()
-                       
+
         if insert_objects_list:
             with Session() as session:
                 session.begin()

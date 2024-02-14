@@ -2,7 +2,7 @@
 import logging
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, Float, Integer, String
 from sqlalchemy.orm import declarative_base
 
 _log = logging.getLogger(__name__)
@@ -32,7 +32,9 @@ class WaterbodyObservation(WaterbodyBase):
 
     __tablename__ = "waterbody_observations"
     obs_id = Column(String, primary_key=True)
-    uid = Column(String, ForeignKey("waterbodies.uid"), index=True)
+    # TODO: Check if foreign key is necessary.
+    # uid = Column(String, ForeignKey("waterbodies.uid"), index=True)
+    uid = Column(String, index=True)
     px_total = Column(Integer)
     px_wet = Column(Float)
     area_wet_m2 = Column(Float)
