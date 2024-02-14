@@ -29,6 +29,15 @@ def make_parquet_file_name(drill_name: str, task_id_string: str) -> str:
     return parquet_file_name
 
 
+def task_id_string_from_parquet_file_name(file_name: str):
+    base_name = os.path.basename(file_name)
+    period = re.search(r"(\d{4}-\d{2}-\d{2})", base_name).group()
+    y = re.search(r"(x\d{3})", base_name).group()
+    x = re.search(r"(y\d{3})", base_name).group()
+    task_id_string = f"{period}/{x}/{y}"
+    return task_id_string
+
+
 def parse_tile_ids(file_path: str) -> str:
     """
     Parse tile ids from a file path.
