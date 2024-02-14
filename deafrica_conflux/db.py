@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 from deafrica_conflux.db_tables import Waterbody, WaterbodyBase, WaterbodyObservation
 from deafrica_conflux.id_field import guess_id_field
 from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_table_from_parquet
+from deafrica_conflux.text import task_id_string_from_parquet_file_name
 
 _log = logging.getLogger(__name__)
 
@@ -663,3 +664,128 @@ def task_obs_exist_in_db(engine: Engine, task_ids_string: str) -> bool:
     else:
         _log.info(f"Observations for task {task_ids_string} do not exist in the {table.name} table")
         return False
+
+
+def add_waterbody_observations_pq_files_to_db_v2(
+    paths: list[str],
+    engine: Engine = None,
+    replace_duplicate_rows: bool = True,
+):
+    """Write drill output parquet files into the waterbodies interstitial DB.
+
+    Arguments
+    ---------
+    paths : list[str]
+        Paths to parquet file to stack.
+    engine: sqlalchemy.engine.Engine
+        Database engine. Default postgres, which is
+        connected to if engine=None.
+    replace_duplicate_rows : bool, optional
+        If True if the observation id already exists in the waterbodies observations table, it will be replaced,
+        else it will be skipped.
+    """
+    # connect to the db
+    if not engine:
+        engine = get_engine_waterbodies()
+
+    # Create a sesssion
+    Session = sessionmaker(bind=engine)
+
+    # Ensure table exists.
+    table = create_waterbody_obs_table(engine)
+
+    if isinstance(paths, str):
+        paths = [paths]
+
+    for idx, path in enumerate(paths):
+        _log.info(f"Processing {path}: {idx+1}/{len(path)}")
+        # Check if the file exists.
+        if not check_file_exists(path):
+            _log.error(f"File {path} does not exist!")
+        else:
+            obs_ids_to_delete = []
+            insert_objects_list = []
+
+            # read the drill output table in...
+            df = pd.read_parquet(path)
+            # parse the date...
+            task_id_string = task_id_string_from_parquet_file_name(path)
+
+            # Note: Doing it this way because drill outputs can be millions of rows.
+            with Session() as session:
+                obs_ids_to_check = [f"{task_id_string}_{i}" for i in df.index.to_list()]
+                obs_ids_exist = session.scalars(
+                    select(table).where(table.c.obs_id.in_(obs_ids_to_check))
+                ).all()
+
+            for row in df.itertuples():
+                obs_id = f"{task_id_string}_{row.Index}"
+                if obs_id not in obs_ids_exist:
+                    obs = dict(
+                        obs_id=obs_id,
+                        uid=row.Index,
+                        px_total=row.px_total,
+                        px_wet=row.px_wet,
+                        area_wet_m2=row.area_wet_m2,
+                        px_dry=row.px_dry,
+                        area_dry_m2=row.area_dry_m2,
+                        px_invalid=row.px_invalid,
+                        area_invalid_m2=row.area_invalid_m2,
+                        date=row.date,
+                    )
+                    insert_objects_list.append(obs)
+                else:
+                    if replace_duplicate_rows:
+                        obs_ids_to_delete.append(obs_id)
+                        obs = dict(
+                            obs_id=obs_id,
+                            uid=row.Index,
+                            px_total=row.px_total,
+                            px_wet=row.px_wet,
+                            area_wet_m2=row.area_wet_m2,
+                            px_dry=row.px_dry,
+                            area_dry_m2=row.area_dry_m2,
+                            px_invalid=row.px_invalid,
+                            area_invalid_m2=row.area_invalid_m2,
+                            date=row.date,
+                        )
+                        insert_objects_list.append(obs)
+                    else:
+                        continue
+
+            if obs_ids_to_delete:
+                with Session() as session:
+                    session.begin()
+                    try:
+                        _log.info(
+                            f"Deleting {len(obs_ids_to_delete)} observations from the {table.name} table"
+                        )
+                        delete_stmt = delete(table).where(table.c.obs_id.in_(obs_ids_to_delete))
+                        session.execute(delete_stmt)
+                    except Exception as error:
+                        session.rollback()
+                        _log.exception(error)
+                        _log.info("Delete operation failed!")
+                    else:
+                        session.commit()
+                    session.close()
+            else:
+                pass
+
+            if insert_objects_list:
+                with Session() as session:
+                    session.begin()
+                    try:
+                        _log.info(
+                            f"Adding {len(insert_objects_list)} observations to the {table.name} table"
+                        )
+                        session.execute(insert(table), insert_objects_list)
+                    except Exception as error:
+                        session.rollback()
+                        _log.exception(error)
+                        _log.info("Insert operation failed!")
+                    else:
+                        session.commit()
+                    session.close()
+            else:
+                _log.error(f"No observations to add to the {table.name} table")
