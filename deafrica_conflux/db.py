@@ -397,23 +397,20 @@ def add_waterbody_polygons_to_db(
             _log.error(f"No polygons to add to the {table.name} table")
 
 
-def add_waterbody_observations_pq_file_to_db(
-    path: str,
+def add_waterbody_observations_pq_files_to_db(
+    paths: list[str],
     engine: Engine = None,
-    drop_table: bool = False,
     replace_duplicate_rows: bool = True,
 ):
-    """Write drill output parquet file into the waterbodies interstitial DB.
+    """Write drill output parquet files into the waterbodies interstitial DB.
 
     Arguments
     ---------
-    path : [str]
-        Path to parquet file to stack.
+    paths : list[str]
+        Paths to parquet file to stack.
     engine: sqlalchemy.engine.Engine
         Database engine. Default postgres, which is
         connected to if engine=None.
-    drop_table : bool, optional
-        If True drop the waterbodies observations table first and create a new table., by default True
     replace_duplicate_rows : bool, optional
         If True if the observation id already exists in the waterbodies observations table, it will be replaced,
         else it will be skipped.
@@ -425,50 +422,21 @@ def add_waterbody_observations_pq_file_to_db(
     # Create a sesssion
     Session = sessionmaker(bind=engine)
 
-    obs_ids_to_delete = []
-    insert_objects_list = []
+    # Ensure table exists.
+    table = create_waterbody_obs_table(engine)
 
-    # drop tables if requested
-    if drop_table:
-        # Drop the waterbodies observations table
-        drop_waterbody_obs_table(engine)
+    if isinstance(paths, str):
+        paths = [paths]
 
-        # Create the table
-        table = create_waterbody_obs_table(engine)
-
+    for idx, path in enumerate(paths):
+        _log.info(f"Processing {path}: {idx+1}/{len(path)}")
         # Check if the file exists.
         if not check_file_exists(path):
             _log.error(f"File {path} does not exist!")
         else:
-            # read the drill out put in...
-            df = read_table_from_parquet(path)
-            # parse the date...
-            task_id_string = df.attrs["task_id_string"]
+            obs_ids_to_delete = []
+            insert_objects_list = []
 
-            for row in df.itertuples():
-                obs_id = f"{task_id_string}_{row.Index}"
-                obs = dict(
-                    obs_id=obs_id,
-                    uid=row.Index,
-                    px_total=row.px_total,
-                    px_wet=row.px_wet,
-                    area_wet_m2=row.area_wet_m2,
-                    px_dry=row.px_dry,
-                    area_dry_m2=row.area_dry_m2,
-                    px_invalid=row.px_invalid,
-                    area_invalid_m2=row.area_invalid_m2,
-                    date=row.date,
-                )
-                insert_objects_list.append(obs)
-
-    else:
-        # Ensure table exists.
-        table = create_waterbody_obs_table(engine)
-
-        # Check if the file exists.
-        if not check_file_exists(path):
-            _log.error(f"File {path} does not exist!")
-        else:
             # read the drill output table in...
             df = read_table_from_parquet(path)
             # parse the date...
@@ -516,40 +484,42 @@ def add_waterbody_observations_pq_file_to_db(
                     else:
                         continue
 
-    if obs_ids_to_delete:
-        with Session() as session:
-            session.begin()
-            try:
-                _log.info(
-                    f"Deleting {len(obs_ids_to_delete)} observations from the {table.name} table"
-                )
-                delete_stmt = delete(table).where(table.c.obs_id.in_(obs_ids_to_delete))
-                session.execute(delete_stmt)
-            except Exception:
-                session.rollback()
-                raise
+            if obs_ids_to_delete:
+                with Session() as session:
+                    session.begin()
+                    try:
+                        _log.info(
+                            f"Deleting {len(obs_ids_to_delete)} observations from the {table.name} table"
+                        )
+                        delete_stmt = delete(table).where(table.c.obs_id.in_(obs_ids_to_delete))
+                        session.execute(delete_stmt)
+                    except Exception as error:
+                        session.rollback()
+                        _log.exception(error)
+                        _log.info("Delete operation failed!")
+                    else:
+                        session.commit()
+                    session.close()
             else:
-                session.commit()
-            session.close()
-    else:
-        pass
+                pass
 
-    if insert_objects_list:
-        with Session() as session:
-            session.begin()
-            try:
-                _log.info(
-                    f"Adding {len(insert_objects_list)} observations to the {table.name} table"
-                )
-                session.execute(insert(table), insert_objects_list)
-            except Exception:
-                session.rollback()
-                raise
+            if insert_objects_list:
+                with Session() as session:
+                    session.begin()
+                    try:
+                        _log.info(
+                            f"Adding {len(insert_objects_list)} observations to the {table.name} table"
+                        )
+                        session.execute(insert(table), insert_objects_list)
+                    except Exception as error:
+                        session.rollback()
+                        _log.exception(error)
+                        _log.info("Insert operation failed!")
+                    else:
+                        session.commit()
+                    session.close()
             else:
-                session.commit()
-            session.close()
-    else:
-        _log.error(f"No observations to add to the {table.name} table")
+                _log.error(f"No observations to add to the {table.name} table")
 
 
 def add_waterbody_observations_table_to_db(
@@ -557,7 +527,6 @@ def add_waterbody_observations_table_to_db(
     task_id_string: str,
     df: pd.DataFrame,
     engine: Engine,
-    drop_table: bool = True,
     replace_duplicate_rows: bool = True,
 ):
     """
@@ -574,8 +543,6 @@ def add_waterbody_observations_table_to_db(
     engine: sqlalchemy.engine.Engine
         Database engine. Default postgres, which is
         connected to if engine=None.
-    drop_table : bool, optional
-        If True drop the waterbodies observations table first and create a new table., by default True
     replace_duplicate_rows : bool, optional
         If True if the observation id already exists in the waterbodies observations table, it will be replaced,
         else it will be skipped.
@@ -591,19 +558,22 @@ def add_waterbody_observations_table_to_db(
     period, x, y = task_id_string.split("/")  # Parse the task id.
     df["date"] = pd.to_datetime(period)
 
+    # Ensure table exists.
+    table = create_waterbody_obs_table(engine)
+
+    # Note: Doing it this way because drill outputs can be millions of rows.
+    with Session() as session:
+        obs_ids_to_check = [f"{task_id_string}_{i}" for i in df.index.to_list()]
+        obs_ids_exist = session.scalars(
+            select(table).where(table.c.obs_id.in_(obs_ids_to_check))
+        ).all()
+
     obs_ids_to_delete = []
     insert_objects_list = []
 
-    # drop tables if requested
-    if drop_table:
-        # Drop the waterbodies observations table
-        drop_waterbody_obs_table(engine)
-
-        # Create the table
-        table = create_waterbody_obs_table(engine)
-
-        for row in df.itertuples():
-            obs_id = f"{task_id_string}_{row.Index}"
+    for row in df.itertuples():
+        obs_id = f"{task_id_string}_{row.Index}"
+        if obs_id not in obs_ids_exist:
             obs = dict(
                 obs_id=obs_id,
                 uid=row.Index,
@@ -617,21 +587,9 @@ def add_waterbody_observations_table_to_db(
                 date=row.date,
             )
             insert_objects_list.append(obs)
-
-    else:
-        # Ensure table exists.
-        table = create_waterbody_obs_table(engine)
-
-        # Note: Doing it this way because drill outputs can be millions of rows.
-        with Session() as session:
-            obs_ids_to_check = [f"{task_id_string}_{i}" for i in df.index.to_list()]
-            obs_ids_exist = session.scalars(
-                select(table).where(table.c.obs_id.in_(obs_ids_to_check))
-            ).all()
-
-        for row in df.itertuples():
-            obs_id = f"{task_id_string}_{row.Index}"
-            if obs_id not in obs_ids_exist:
+        else:
+            if replace_duplicate_rows:
+                obs_ids_to_delete.append(obs_id)
                 obs = dict(
                     obs_id=obs_id,
                     uid=row.Index,
@@ -646,23 +604,7 @@ def add_waterbody_observations_table_to_db(
                 )
                 insert_objects_list.append(obs)
             else:
-                if replace_duplicate_rows:
-                    obs_ids_to_delete.append(obs_id)
-                    obs = dict(
-                        obs_id=obs_id,
-                        uid=row.Index,
-                        px_total=row.px_total,
-                        px_wet=row.px_wet,
-                        area_wet_m2=row.area_wet_m2,
-                        px_dry=row.px_dry,
-                        area_dry_m2=row.area_dry_m2,
-                        px_invalid=row.px_invalid,
-                        area_invalid_m2=row.area_invalid_m2,
-                        date=row.date,
-                    )
-                    insert_objects_list.append(obs)
-                else:
-                    continue
+                continue
 
     if obs_ids_to_delete:
         with Session() as session:
@@ -673,9 +615,11 @@ def add_waterbody_observations_table_to_db(
                 )
                 delete_stmt = delete(table).where(table.c.obs_id.in_(obs_ids_to_delete))
                 session.execute(delete_stmt)
-            except Exception:
+            except Exception as error:
                 session.rollback()
-                raise
+                _log.exception(error)
+                _log.info("Delete operation failed!")
+                # raise
             else:
                 session.commit()
             session.close()
@@ -690,9 +634,11 @@ def add_waterbody_observations_table_to_db(
                     f"Adding {len(insert_objects_list)} observations to the {table.name} table"
                 )
                 session.execute(insert(table), insert_objects_list)
-            except Exception:
+            except Exception as error:
                 session.rollback()
-                raise
+                _log.exception(error)
+                _log.info("Insert operation failed!")
+                # raise
             else:
                 session.commit()
             session.close()
