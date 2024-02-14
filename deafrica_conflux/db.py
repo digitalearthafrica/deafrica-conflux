@@ -429,7 +429,7 @@ def add_waterbody_observations_pq_files_to_db(
         paths = [paths]
 
     for idx, path in enumerate(paths):
-        _log.info(f"Processing {path}: {idx+1}/{len(path)}")
+        _log.info(f"Processing {path}: {idx+1}/{len(paths)}")
         # Check if the file exists.
         if not check_file_exists(path):
             _log.error(f"File {path} does not exist!")
@@ -698,7 +698,7 @@ def add_waterbody_observations_pq_files_to_db_v2(
         paths = [paths]
 
     for idx, path in enumerate(paths):
-        _log.info(f"Processing {path}: {idx+1}/{len(path)}")
+        _log.info(f"Processing {path}: {idx+1}/{len(paths)}")
         # Check if the file exists.
         if not check_file_exists(path):
             _log.error(f"File {path} does not exist!")
