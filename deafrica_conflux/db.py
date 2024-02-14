@@ -14,7 +14,7 @@ import pandas as pd
 
 # from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
-from sqlalchemy import MetaData, Table, create_engine, delete, insert, inspect, select
+from sqlalchemy import MetaData, Table, create_engine, update, insert, inspect, select
 
 # from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
@@ -298,9 +298,8 @@ def add_waterbody_polygons_to_db(
         # Create a sesssion
         Session = sessionmaker(bind=engine)
 
-        uids_to_delete = []
         insert_objects_list = []
-
+        update_objects_list = []
         if drop_table:
             # Drop the waterbodies table
             drop_waterbody_table(engine)
@@ -331,6 +330,7 @@ def add_waterbody_polygons_to_db(
             with Session() as session:
                 uids = session.scalars(select(table.c["uid"])).all()
                 _log.info(f"Found {len(uids)} polygon UIDs in the {table.name} table")
+
             srid = waterbodies.crs.to_epsg()
 
             for row in waterbodies.itertuples():
@@ -347,7 +347,6 @@ def add_waterbody_polygons_to_db(
                     insert_objects_list.append(object_)
                 else:
                     if replace_duplicate_rows:
-                        uids_to_delete.append(row.UID)
                         object_ = dict(
                             area_m2=row.area_m2,
                             uid=row.UID,
@@ -357,28 +356,26 @@ def add_waterbody_polygons_to_db(
                             timeseries=row.timeseries,
                             geometry=f"SRID={srid};{row.geometry.wkt}",
                         )
-                        insert_objects_list.append(object_)
+                        update_objects_list.append(object_)
                     else:
                         continue
 
-        if uids_to_delete:
+        if update_objects_list:
             with Session() as session:
                 session.begin()
                 try:
                     _log.info(
-                        f"Deleting {len(uids_to_delete)} polygons from the {table.name} table"
+                        f"Updating {len(insert_objects_list)} polygons in the {table.name} table"
                     )
-                    delete_stmt = delete(table).where(table.c.uid.in_(uids_to_delete))
-                    session.execute(delete_stmt)
-                except Exception:
+                    session.execute(update(table), update_objects_list)
+                except Exception as error :
                     session.rollback()
-                    raise
+                    _log.exception(error)
+                    _log.error("Update operation failed")
                 else:
                     session.commit()
                 session.close()
-        else:
-            pass
-
+                       
         if insert_objects_list:
             with Session() as session:
                 session.begin()
@@ -387,9 +384,10 @@ def add_waterbody_polygons_to_db(
                         f"Adding {len(insert_objects_list)} polygons to the {table.name} table"
                     )
                     session.execute(insert(table), insert_objects_list)
-                except Exception:
+                except Exception as error:
                     session.rollback()
-                    raise
+                    _log.exception(error)
+                    _log.error("Insert operation failed")
                 else:
                     session.commit()
                 session.close()
