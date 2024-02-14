@@ -18,8 +18,9 @@ import fsspec
 import pandas as pd
 import pyarrow
 import pyarrow.parquet
+from odc.stats.model import DateTimeRange
 
-from deafrica_conflux.text import make_parquet_file_name
+from deafrica_conflux.text import extract_date_from_filename, make_parquet_file_name
 
 _log = logging.getLogger(__name__)
 
@@ -444,3 +445,37 @@ def find_geotiff_files(path: str | Path, pattern: str = ".*", verbose: bool = Tr
     if verbose:
         _log.info(f"Found {len(geotiff_file_paths)} GeoTIFF files.")
     return geotiff_file_paths
+
+
+def filter_files_by_date_range(file_paths: list[str], temporal_range: str) -> list[str]:
+    """
+    Filter file paths using a date range.
+
+    Parameters
+    ----------
+    file_paths : list[str]
+        List of files to filter.
+    temporal_range : str
+        Date range to filter by e.g. 2023-01--P1M filters file by
+        the date range 2023-01-01 to 2023-01-31.
+
+    Returns
+    -------
+    list[str]
+        List of files within the defined temporal range.
+    """
+    temporal_range_ = DateTimeRange(temporal_range)
+    start_date = temporal_range_.start
+    end_date = temporal_range_.end
+
+    # Filter files based on the dates extracted from filenames
+    filtered_file_paths = []
+    for path in file_paths:
+        file_date = extract_date_from_filename(os.path.basename(path))
+
+        if file_date:
+            # Check if the file date is within the specified date range
+            if start_date <= file_date <= end_date:
+                filtered_file_paths.append(path)
+
+    return filtered_file_paths

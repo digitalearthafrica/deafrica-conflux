@@ -1,5 +1,7 @@
 """Text formatting functions"""
 import os
+from datetime import datetime
+import re
 
 
 def make_parquet_file_name(drill_name: str, task_id_string: str) -> str:
@@ -96,3 +98,32 @@ def task_id_to_tuple(task_id_string: str) -> tuple:
     task_id_tuple = (period, x, y)
 
     return task_id_tuple
+
+
+def extract_date_from_filename(filename) -> datetime:
+    """
+    Extract a date in the in the format YYYY-MM-DD from
+    a file name.
+
+    Parameters
+    ----------
+    filename : str
+        File name to exctract date from.
+
+    Returns
+    -------
+    datetime
+        Extracted date as a datetime object
+    """
+    # Define a regex pattern to extract dates in the format YYYY-MM-DD
+    date_pattern = r"(\d{4}-\d{2}-\d{2})"
+
+    # Search for the date pattern in the filename
+    # Note: re.search() finds the first match only of a pattern
+    match = re.search(date_pattern, filename)
+
+    if match:
+        # Extract the matched date
+        return datetime.strptime(match.group(), "%Y-%m-%d")
+    else:
+        return None

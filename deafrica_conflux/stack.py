@@ -9,8 +9,6 @@ Geoscience Australia
 
 import logging
 import os
-import re
-from datetime import datetime
 from pathlib import Path
 
 import dask
@@ -19,12 +17,12 @@ import fsspec
 import numpy as np
 import pandas as pd
 import pyarrow.fs
-from odc.stats.model import DateTimeRange
 
 from deafrica_conflux.io import (
     check_dir_exists,
     check_file_exists,
     check_if_s3_uri,
+    filter_files_by_date_range,
     find_parquet_files,
 )
 
@@ -65,69 +63,6 @@ def update_timeseries(df: pd.DataFrame) -> pd.DataFrame:
 
     df.sort_index(inplace=True)
     return df
-
-
-def extract_date_from_filename(filename) -> datetime:
-    """
-    Extract a date in the in the format YYYY-MM-DD from
-    a file name.
-
-    Parameters
-    ----------
-    filename : str
-        File name to exctract date from.
-
-    Returns
-    -------
-    datetime
-        Extracted date as a datetime object
-    """
-    # Define a regex pattern to extract dates in the format YYYY-MM-DD
-    date_pattern = r"(\d{4}-\d{2}-\d{2})"
-
-    # Search for the date pattern in the filename
-    # Note: re.search() finds the first match only of a pattern
-    match = re.search(date_pattern, filename)
-
-    if match:
-        # Extract the matched date
-        return datetime.strptime(match.group(), "%Y-%m-%d")
-    else:
-        return None
-
-
-def filter_files_by_date_range(file_paths: list[str], temporal_range: str) -> list[str]:
-    """
-    Filter file paths using a date range.
-
-    Parameters
-    ----------
-    file_paths : list[str]
-        List of files to filter.
-    temporal_range : str
-        Date range to filter by e.g. 2023-01--P1M filters file by
-        the date range 2023-01-01 to 2023-01-31.
-
-    Returns
-    -------
-    list[str]
-        List of files within the defined temporal range.
-    """
-    temporal_range_ = DateTimeRange(temporal_range)
-    start_date = temporal_range_.start
-    end_date = temporal_range_.end
-
-    # Filter files based on the dates extracted from filenames
-    filtered_file_paths = []
-    for path in file_paths:
-        file_date = extract_date_from_filename(os.path.basename(path))
-
-        if file_date:
-            # Check if the file date is within the specified date range
-            if start_date <= file_date <= end_date:
-                filtered_file_paths.append(path)
-
-    return filtered_file_paths
 
 
 def stack_polygon_timeseries_to_csv(
