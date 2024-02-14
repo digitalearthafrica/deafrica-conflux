@@ -365,7 +365,7 @@ def add_waterbody_polygons_to_db(
                 session.begin()
                 try:
                     _log.info(
-                        f"Updating {len(insert_objects_list)} polygons in the {table.name} table"
+                        f"Updating {len(update_objects_list)} polygons in the {table.name} table"
                     )
                     session.execute(update(table), update_objects_list)
                 except Exception as error :
