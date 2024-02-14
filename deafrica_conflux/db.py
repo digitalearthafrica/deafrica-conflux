@@ -349,7 +349,7 @@ def add_waterbody_polygons_to_db(
                     if replace_duplicate_rows:
                         object_ = dict(
                             area_m2=row.area_m2,
-                            uid=row.UID,
+                            # uid=row.UID,
                             wb_id=row.WB_ID,
                             length_m=row.length_m,
                             perim_m=row.perim_m,
