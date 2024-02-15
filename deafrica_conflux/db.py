@@ -246,7 +246,7 @@ def add_waterbody_polygons_to_db(
     engine: Engine,
     waterbodies_polygons_fp: str | Path,
     drop_table: bool = True,
-    replace_duplicate_rows: bool = True,
+    update_rows: bool = True,
 ):
     """
     Add the waterbody polygon into the waterbodies table.
@@ -256,8 +256,8 @@ def add_waterbody_polygons_to_db(
     engine : Engine
     drop_table : bool, optional
         If True drop the waterbodies table first and create a new table., by default True
-    replace_duplicate_rows : bool, optional
-        If True if the polygon uid already exists in the waterbodies table, it will be replaced,
+    update_rows : bool, optional
+        If True if the polygon uid already exists in the waterbodies table, it will be updated,
         else it will be skipped.
     waterbodies_polygons_fp : str | Path | None, optional
                 Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None, by default None
@@ -299,7 +299,6 @@ def add_waterbody_polygons_to_db(
         # Create a sesssion
         Session = sessionmaker(bind=engine)
 
-        uids_to_delete = []
         insert_objects_list = []
         if drop_table:
             # Drop the waterbodies table
@@ -347,36 +346,23 @@ def add_waterbody_polygons_to_db(
                     )
                     insert_objects_list.append(object_)
                 else:
-                    if replace_duplicate_rows:
-                        uids_to_delete.append(row.UID)
-                        object_ = dict(
-                            uid=row.UID,
-                            area_m2=row.area_m2,
-                            wb_id=row.WB_ID,
-                            length_m=row.length_m,
-                            perim_m=row.perim_m,
-                            timeseries=row.timeseries,
-                            geometry=f"SRID={srid};{row.geometry.wkt}",
-                        )
-                        insert_objects_list.append(object_)
+                    if update_rows:
+                        with Session() as session:
+                            row_to_update = session.query(table).filter_by(uid=row.UID).first()
+                            # Modify the attributes of the queried object
+                            if row_to_update:
+                                row_to_update.area_m2 = row.area_m2
+                                row_to_update.wb_id = row.WB_ID
+                                row_to_update.length_m = row.length_m
+                                row_to_update.perim_m = row.perim_m
+                                row_to_update.timeseries = row.timeseries
+                                row_to_update.geometry = f"SRID={srid};{row.geometry.wkt}"
+                                # Commit the changes to the session
+                                session.commit()
+                            # Close the session
+                            session.close()
                     else:
                         continue
-
-        if uids_to_delete:
-            with Session() as session:
-                session.begin()
-                try:
-                    _log.info(
-                        f"Deleting {len(uids_to_delete)} polygons from the {table.name} table"
-                    )
-                    session.execute(delete(table).where(table.c.uid.in_(uids_to_delete)))
-                except Exception as error:
-                    session.rollback()
-                    _log.exception(error)
-                    _log.error("Delete operation failed")
-                else:
-                    session.commit()
-                session.close()
 
         if insert_objects_list:
             with Session() as session:
