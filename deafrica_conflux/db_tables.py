@@ -2,7 +2,7 @@
 import logging
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import declarative_base
 
 _log = logging.getLogger(__name__)
@@ -32,8 +32,7 @@ class WaterbodyObservation(WaterbodyBase):
 
     __tablename__ = "waterbody_observations"
     obs_id = Column(String, primary_key=True)
-    # TODO: Check if foreign key is necessary.
-    # uid = Column(String, ForeignKey("waterbodies.uid"), index=True)
+    uid = Column(String, ForeignKey("waterbodies.uid"), index=True)
     uid = Column(String, index=True)
     px_total = Column(Integer)
     px_wet = Column(Float)
@@ -49,3 +48,20 @@ class WaterbodyObservation(WaterbodyBase):
             f"<WaterbodyObservation obs_id={self.obs_id}, uid={self.uid}, "
             + f"date={self.date}, ...>"
         )
+
+
+class WaterbodyTimeseries(WaterbodyBase):
+    """Table for the waterbodies timeseries"""
+
+    __tablename__ = "waterbody_timeseries"
+    uid = Column(String, ForeignKey("waterbodies.uid"), primary_key=True, index=True)
+    px_total = Column(Integer)
+    px_wet = Column(Float)
+    area_wet_m2 = Column(Float)
+    px_dry = Column(Float)
+    area_dry_m2 = Column(Float)
+    px_invalid = Column(Float)
+    area_invalid_m2 = Column(Float)
+
+    def __repr__(self):
+        return f"<WaterbodyTimeseries uid={self.uid}, ...>"

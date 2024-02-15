@@ -1,7 +1,7 @@
 """Text formatting functions"""
 import os
-from datetime import datetime
 import re
+from datetime import datetime
 
 
 def make_parquet_file_name(drill_name: str, task_id_string: str) -> str:
