@@ -14,7 +14,7 @@ import pandas as pd
 
 # from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
-from sqlalchemy import MetaData, Table, create_engine, delete, insert, inspect, select, update
+from sqlalchemy import MetaData, Table, create_engine, insert, inspect, select, update
 
 # from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
@@ -477,7 +477,7 @@ def add_waterbody_observations_pq_files_to_db(
                             date=row.date,
                         )
                         update_stmt = (
-                            update(table).where(table.c.uid == row.UID).values(values_to_update)
+                            update(table).where(table.c.obs_id == obs_id).values(values_to_update)
                         )
                         update_statements.append(update_stmt)
                     else:
@@ -596,7 +596,7 @@ def add_waterbody_observations_table_to_db(
                     area_invalid_m2=row.area_invalid_m2,
                     date=row.date,
                 )
-                update_stmt = update(table).where(table.c.uid == row.UID).values(values_to_update)
+                update_stmt = update(table).where(table.c.obs_id == obs_id).values(values_to_update)
                 update_statements.append(update_stmt)
             else:
                 continue
