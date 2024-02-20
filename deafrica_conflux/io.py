@@ -492,10 +492,10 @@ def add_missing_metadata(path: str):
 
     """
     try:
-        df = read_table_from_parquet(path)
+        read_table_from_parquet(path)
     except KeyError:
         # Parse the drill name and task id from the file path.
-        # This only works for files named using th
+        # This only works for files named using `make_parquet_file_name`
         base_name, _ = os.path.splitext(os.path.basename(path))
         drill_name, x, y, period = base_name.split("_")
         task_id_string = f"{period}/{x}/{y}"
@@ -530,10 +530,6 @@ def add_missing_metadata(path: str):
 
         # Write the table back.
         is_s3 = check_if_s3_uri(path)
-        if is_s3:
-            fs = fsspec.filesystem("s3")
-        else:
-            fs = fsspec.filesystem("file")
 
         if is_s3:
             s3 = boto3.client("s3")

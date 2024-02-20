@@ -24,7 +24,6 @@ from sqlalchemy.orm import sessionmaker
 from deafrica_conflux.db_tables import Waterbody, WaterbodyBase, WaterbodyObservation
 from deafrica_conflux.id_field import guess_id_field
 from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_table_from_parquet
-from deafrica_conflux.text import task_id_string_from_parquet_file_name
 
 _log = logging.getLogger(__name__)
 
@@ -245,8 +244,8 @@ def drop_all_waterbody_tables(engine: Engine):
 def add_waterbody_polygons_to_db(
     engine: Engine,
     waterbodies_polygons_fp: str | Path,
-    drop_table: bool = True,
-    update_rows: bool = True,
+    drop_table: bool = False,
+    update_rows: bool = False,
 ):
     """
     Add the waterbody polygon into the waterbodies table.
@@ -257,10 +256,10 @@ def add_waterbody_polygons_to_db(
     drop_table : bool, optional
         If True drop the waterbodies table first and create a new table., by default True
     update_rows : bool, optional
-        If True if the polygon uid already exists in the waterbodies table, it will be updated,
+        If True if the polygon uid already exists in the waterbodies table, the row will be updatedit will be updated,
         else it will be skipped.
     waterbodies_polygons_fp : str | Path | None, optional
-                Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None, by default None
+        Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None, by default None
     """
     # connect to the db
     if not engine:
@@ -350,15 +349,14 @@ def add_waterbody_polygons_to_db(
                         with Session() as session:
                             row_to_update = session.query(table).filter_by(uid=row.UID).first()
                             # Modify the attributes of the queried object
-                            if row_to_update:
-                                row_to_update.area_m2 = row.area_m2
-                                row_to_update.wb_id = row.WB_ID
-                                row_to_update.length_m = row.length_m
-                                row_to_update.perim_m = row.perim_m
-                                row_to_update.timeseries = row.timeseries
-                                row_to_update.geometry = f"SRID={srid};{row.geometry.wkt}"
-                                # Commit the changes to the session
-                                session.commit()
+                            row_to_update.area_m2 = row.area_m2
+                            row_to_update.wb_id = row.WB_ID
+                            row_to_update.length_m = row.length_m
+                            row_to_update.perim_m = row.perim_m
+                            row_to_update.timeseries = row.timeseries
+                            row_to_update.geometry = f"SRID={srid};{row.geometry.wkt}"
+                            # Commit the changes to the session
+                            session.commit()
                             # Close the session
                             session.close()
                     else:
@@ -694,8 +692,11 @@ def add_waterbody_observations_pq_files_to_db_v2(
 
             # read the drill output table in...
             df = pd.read_parquet(path)
-            # parse the date...
-            task_id_string = task_id_string_from_parquet_file_name(path)
+            # Parse the drill name and task id from the file path.
+            # This only works for files named using `make_parquet_file_name`
+            base_name, _ = os.path.splitext(os.path.basename(path))
+            _, x, y, period = base_name.split("_")
+            task_id_string = f"{period}/{x}/{y}"
 
             # Note: Doing it this way because drill outputs can be millions of rows.
             with Session() as session:
