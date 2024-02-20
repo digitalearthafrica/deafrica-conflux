@@ -298,6 +298,7 @@ def add_waterbody_polygons_to_db(
         # Create a sesssion
         Session = sessionmaker(bind=engine)
 
+        update_statements = []
         insert_objects_list = []
         if drop_table:
             # Drop the waterbodies table
@@ -346,25 +347,34 @@ def add_waterbody_polygons_to_db(
                     insert_objects_list.append(object_)
                 else:
                     if update_rows:
-                        with Session() as session:
-                            values_to_update = dict(
-                                area_m2=row.area_m2,
-                                wb_id=row.WB_ID,
-                                length_m=row.length_m,
-                                perim_m=row.perim_m,
-                                timeseries=row.timeseries,
-                                geometry=f"SRID={srid};{row.geometry.wkt}",
-                            )
-                            update_stmt = (
-                                update(table).where(table.c.uid == row.UID).values(values_to_update)
-                            )
-                            session.execute(update_stmt)
-                            # Commit the changes to the session
-                            session.commit()
-                            # Close the session
-                            session.close()
+                        values_to_update = dict(
+                            area_m2=row.area_m2,
+                            wb_id=row.WB_ID,
+                            length_m=row.length_m,
+                            perim_m=row.perim_m,
+                            timeseries=row.timeseries,
+                            geometry=f"SRID={srid};{row.geometry.wkt}",
+                        )
+                        update_stmt = (
+                            update(table).where(table.c.uid == row.UID).values(values_to_update)
+                        )
+                        update_statements.append(update_stmt)
                     else:
                         continue
+
+        if update_statements:
+            _log.info(f"Updating {len(update_statements)} polygons in the {table.name} table")
+            with Session() as session:
+                for statement in update_statements:
+                    try:
+                        session.execute(statement)
+                    except Exception as error:
+                        session.rollback()
+                        _log.exception(error)
+                    else:
+                        session.commit()
+        else:
+            _log.error(f"No polygons to update in the {table.name} table")
 
         if insert_objects_list:
             with Session() as session:
