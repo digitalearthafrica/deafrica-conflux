@@ -14,7 +14,7 @@ import pandas as pd
 
 # from geoalchemy2 import load_spatialite
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
-from sqlalchemy import MetaData, Table, create_engine, delete, insert, inspect, select
+from sqlalchemy import MetaData, Table, create_engine, delete, insert, inspect, select, update
 
 # from sqlalchemy.event import listen
 from sqlalchemy.exc import NoSuchTableError
@@ -347,14 +347,18 @@ def add_waterbody_polygons_to_db(
                 else:
                     if update_rows:
                         with Session() as session:
-                            row_to_update = session.query(table).filter_by(uid=row.UID).first()
-                            # Modify the attributes of the queried object
-                            row_to_update.area_m2 = row.area_m2
-                            row_to_update.wb_id = row.WB_ID
-                            row_to_update.length_m = row.length_m
-                            row_to_update.perim_m = row.perim_m
-                            row_to_update.timeseries = row.timeseries
-                            row_to_update.geometry = f"SRID={srid};{row.geometry.wkt}"
+                            values_to_update = dict(
+                                area_m2=row.area_m2,
+                                wb_id=row.WB_ID,
+                                length_m=row.length_m,
+                                perim_m=row.perim_m,
+                                timeseries=row.timeseries,
+                                geometry=f"SRID={srid};{row.geometry.wkt}",
+                            )
+                            update_stmt = (
+                                update(table).where(table.c.uid == row.UID).values(values_to_update)
+                            )
+                            session.execute(update_stmt)
                             # Commit the changes to the session
                             session.commit()
                             # Close the session
