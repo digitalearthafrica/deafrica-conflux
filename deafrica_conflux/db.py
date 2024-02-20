@@ -523,7 +523,7 @@ def add_waterbody_observations_table_to_db(
     task_id_string: str,
     df: pd.DataFrame,
     engine: Engine,
-    replace_duplicate_rows: bool = True,
+    update_rows: bool = True,
 ):
     """
     Write drill output parquet files into the waterbodies interstitial DB
@@ -539,7 +539,7 @@ def add_waterbody_observations_table_to_db(
     engine: sqlalchemy.engine.Engine
         Database engine. Default postgres, which is
         connected to if engine=None.
-    replace_duplicate_rows : bool, optional
+    update_rows : bool, optional
         If True if the observation id already exists in the waterbodies observations table, it will be replaced,
         else it will be skipped.
     """
@@ -564,7 +564,7 @@ def add_waterbody_observations_table_to_db(
             select(table).where(table.c.obs_id.in_(obs_ids_to_check))
         ).all()
 
-    obs_ids_to_delete = []
+    update_statements = []
     insert_objects_list = []
 
     for row in df.itertuples():
@@ -584,10 +584,8 @@ def add_waterbody_observations_table_to_db(
             )
             insert_objects_list.append(obs)
         else:
-            if replace_duplicate_rows:
-                obs_ids_to_delete.append(obs_id)
-                obs = dict(
-                    obs_id=obs_id,
+            if update_rows:
+                values_to_update = dict(
                     uid=row.Index,
                     px_total=row.px_total,
                     px_wet=row.px_wet,
@@ -598,29 +596,24 @@ def add_waterbody_observations_table_to_db(
                     area_invalid_m2=row.area_invalid_m2,
                     date=row.date,
                 )
-                insert_objects_list.append(obs)
+                update_stmt = update(table).where(table.c.uid == row.UID).values(values_to_update)
+                update_statements.append(update_stmt)
             else:
                 continue
 
-    if obs_ids_to_delete:
+    if update_statements:
+        _log.info(f"Updating {len(update_statements)} observations in the {table.name} table")
         with Session() as session:
-            session.begin()
-            try:
-                _log.info(
-                    f"Deleting {len(obs_ids_to_delete)} observations from the {table.name} table"
-                )
-                delete_stmt = delete(table).where(table.c.obs_id.in_(obs_ids_to_delete))
-                session.execute(delete_stmt)
-            except Exception as error:
-                session.rollback()
-                _log.exception(error)
-                _log.info("Delete operation failed!")
-                # raise
-            else:
-                session.commit()
-            session.close()
+            for statement in update_statements:
+                try:
+                    session.execute(statement)
+                except Exception as error:
+                    session.rollback()
+                    _log.exception(error)
+                else:
+                    session.commit()
     else:
-        pass
+        _log.error(f"No observations to update in the {table.name} table")
 
     if insert_objects_list:
         with Session() as session:
