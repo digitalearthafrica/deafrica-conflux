@@ -479,3 +479,79 @@ def filter_files_by_date_range(file_paths: list[str], temporal_range: str) -> li
                 filtered_file_paths.append(path)
 
     return filtered_file_paths
+
+
+def add_missing_metadata(path: str):
+    """
+    Update existing drill output parquet files with the required metadata.
+
+    Parameters
+    ----------
+    path : str
+        Path to the parquet file
+
+    """
+    try:
+        df = read_table_from_parquet(path)
+    except KeyError:
+        # Parse the drill name and task id from the file path.
+        # This only works for files named using th
+        base_name, _ = os.path.splitext(os.path.basename(path))
+        drill_name, x, y, period = base_name.split("_")
+        task_id_string = f"{period}/{x}/{y}"
+
+        # Read the table from the path
+        table = pd.read_parquet(path)
+
+        # Add the date to the table.
+        if "date" not in table.columns:
+            table["date"] = pd.to_datetime(period)
+
+        # Convert the table to pyarrow.
+        table_pa = pyarrow.Table.from_pandas(table)
+
+        # Dump new metadata to JSON.
+        meta_json = json.dumps({"drill": drill_name, "task_id_string": task_id_string})
+
+        # Dump existing (Pandas) metadata.
+        # https://towardsdatascience.com/
+        #   saving-metadata-with-dataframes-71f51f558d8e
+        existing_meta = table_pa.schema.metadata
+        combined_meta = {
+            PARQUET_META_KEY: meta_json.encode(),
+            **existing_meta,
+        }
+
+        # Replace the metadata.
+        table_pa = table_pa.replace_schema_metadata(combined_meta)
+
+        parquet_buffer = BytesIO()
+        pyarrow.parquet.write_table(table_pa, parquet_buffer)
+
+        # Write the table back.
+        is_s3 = check_if_s3_uri(path)
+        if is_s3:
+            fs = fsspec.filesystem("s3")
+        else:
+            fs = fsspec.filesystem("file")
+
+        if is_s3:
+            s3 = boto3.client("s3")
+            # Parse the S3 URI
+            parsed_uri = urlparse(path)
+            # Extract the bucket name and object key
+            bucket_name = parsed_uri.netloc
+            object_key = parsed_uri.path.lstrip("/")
+            parquet_buffer.seek(0)  # Reset the buffer position
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=object_key,
+                Body=parquet_buffer,
+                ACL="bucket-owner-full-control",  # Set the ACL to bucket-owner-full-control
+            )
+        else:
+            pyarrow.parquet.write_table(table=table_pa, where=path, compression="GZIP")
+
+        _log.info(f"Metadata for {path} has been updated")
+    else:
+        _log.info(f"Skipping metadata update for {path}")
