@@ -29,49 +29,6 @@ def make_parquet_file_name(drill_name: str, task_id_string: str) -> str:
     return parquet_file_name
 
 
-def task_id_string_from_parquet_file_name(file_name: str) -> str:
-    """
-    Get the task id string from the drill output file name.
-    Only works for files whose names were created using `make_parquet_file_name`.
-
-    Parameters
-    ----------
-    file_name : str
-        File name of the drill output parquet file.
-
-    Returns
-    -------
-    str
-        Task id string.
-    """
-    base_name = os.path.basename(file_name)
-    period = re.search(r"(\d{4}-\d{2}-\d{2})", base_name).group()
-    y = re.search(r"(x\d{3})", base_name).group()
-    x = re.search(r"(y\d{3})", base_name).group()
-    task_id_string = f"{period}/{x}/{y}"
-    return task_id_string
-
-
-def drill_name_from_parquet_file_name(file_name: str) -> str:
-    """
-    Get the drill name from the drill output file name.
-    Only works for files whose names were created using `make_parquet_file_name`.
-
-    Parameters
-    ----------
-    file_name : str
-        File name of the drill output parquet file.
-
-    Returns
-    -------
-    str
-        Drill name.
-    """
-    base_name = os.path.basename(file_name)
-    drill_name = base_name.split("_")[0]
-    return drill_name
-
-
 def parse_tile_ids(file_path: str) -> str:
     """
     Parse tile ids from a file path.
