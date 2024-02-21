@@ -23,7 +23,12 @@ from sqlalchemy.orm import sessionmaker
 
 from deafrica_conflux.db_tables import Waterbody, WaterbodyBase, WaterbodyObservation
 from deafrica_conflux.id_field import guess_id_field
-from deafrica_conflux.io import PARQUET_EXTENSIONS, check_file_exists, read_table_from_parquet
+from deafrica_conflux.io import (
+    PARQUET_EXTENSIONS,
+    check_file_exists,
+    read_table_from_parquet_with_metadata,
+    read_table_from_parquet_without_metadata,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -436,7 +441,11 @@ def add_waterbody_observations_pq_files_to_db(
             insert_objects_list = []
 
             # read the drill output table in...
-            df = read_table_from_parquet(path)
+            try:
+                df = read_table_from_parquet_with_metadata(path)
+            except KeyError:
+                df = read_table_from_parquet_without_metadata(path)
+
             # parse the date...
             task_id_string = df.attrs["task_id_string"]
 

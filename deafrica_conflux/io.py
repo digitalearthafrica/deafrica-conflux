@@ -171,7 +171,7 @@ def write_table_to_parquet(
     return output_file_path
 
 
-def read_table_from_parquet(path: str | Path) -> pd.DataFrame:
+def read_table_from_parquet_with_metadata(path: str | Path) -> pd.DataFrame:
     """
     Read a Parquet file with Conflux metadata.
 
@@ -194,6 +194,38 @@ def read_table_from_parquet(path: str | Path) -> pd.DataFrame:
     metadata = json.loads(meta_json)
     for key, val in metadata.items():
         df.attrs[key] = val
+    return df
+
+
+def read_table_from_parquet_without_metadata(path: str | Path) -> pd.DataFrame:
+    """
+    Read a Parquet file without Conflux metadata.
+
+    Arguments
+    ---------
+    path : str | Path
+        Path to Parquet file.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with attrs set.
+    """
+    # "Support" pathlib Paths.
+    path = str(path)
+
+    # Parse the drill name and task id from the file path.
+    base_name, _ = os.path.splitext(os.path.basename(path))
+    drill_name, x, y, period = base_name.split("_")
+    task_id_string = f"{period}/{x}/{y}"
+
+    df = pd.read_parquet(path)
+
+    metadata = {"drill": drill_name, "task_id_string": task_id_string}
+
+    for key, val in metadata.items():
+        df.attrs[key] = val
+
     return df
 
 
@@ -492,10 +524,9 @@ def add_missing_metadata(path: str):
 
     """
     try:
-        read_table_from_parquet(path)
+        read_table_from_parquet_with_metadata(path)
     except KeyError:
         # Parse the drill name and task id from the file path.
-        # This only works for files named using `make_parquet_file_name`
         base_name, _ = os.path.splitext(os.path.basename(path))
         drill_name, x, y, period = base_name.split("_")
         task_id_string = f"{period}/{x}/{y}"
