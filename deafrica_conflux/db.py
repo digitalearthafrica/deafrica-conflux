@@ -425,8 +425,8 @@ def add_waterbody_observations_pq_files_to_db(
     # Create a sesssion
     Session = sessionmaker(bind=engine)
 
-    # Ensure table exists.
-    table = create_waterbody_obs_table(engine)
+    table_name = Waterbody.__tablename__
+    table = get_table(engine=engine, table_name=table_name)
 
     if isinstance(paths, str):
         paths = [paths]
