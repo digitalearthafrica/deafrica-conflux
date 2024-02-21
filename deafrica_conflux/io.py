@@ -550,4 +550,4 @@ def add_missing_metadata(path: str):
 
         _log.info(f"Metadata for {path} has been updated")
     else:
-        _log.info(f"Skipping metadata update for {path}")
+        _log.info(f"Metadata update not required for {path}")
