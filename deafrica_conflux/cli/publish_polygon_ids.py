@@ -21,14 +21,14 @@ from deafrica_conflux.queues import get_queue_url, purge_queue, send_batch_with_
     help="SQS Queue to publish the polygons ids to.",
 )
 @click.option(
-    "--polygon-ids-mapping-file",
+    "--polygon-numericids-to-stringids-file",
     type=str,
-    help="JSON file mapping numerical polygons ids (WB_ID) to string polygons ids (UID).",
+    help="JSON file mapping numeric polygon ids (WB_ID) to string polygon ids (UID).",
 )
 def publish_polygon_ids(
     verbose,
     ids_sqs_queue,
-    polygon_ids_mapping_file,
+    polygon_numericids_to_stringids_file,
 ):
     """Publish polygon ids to SQS queue."""
     # Set up logger.
@@ -36,23 +36,23 @@ def publish_polygon_ids(
     _log = logging.getLogger(__name__)
 
     # Support pathlib paths.
-    polygon_ids_mapping_file = str(polygon_ids_mapping_file)
+    polygon_numericids_to_stringids_file = str(polygon_numericids_to_stringids_file)
 
-    if not check_file_exists(polygon_ids_mapping_file):
-        _log.error(f"File {polygon_ids_mapping_file} does not exist!")
-        raise FileNotFoundError(f"File {polygon_ids_mapping_file} does not exist!)")
+    if not check_file_exists(polygon_numericids_to_stringids_file):
+        _log.error(f"File {polygon_numericids_to_stringids_file} does not exist!")
+        raise FileNotFoundError(f"File {polygon_numericids_to_stringids_file} does not exist!)")
 
     # Read the polygons ids mapping file.
-    if check_if_s3_uri(polygon_ids_mapping_file):
+    if check_if_s3_uri(polygon_numericids_to_stringids_file):
         fs = fsspec.filesystem("s3")
     else:
         fs = fsspec.filesystem("file")
 
-    with fs.open(polygon_ids_mapping_file) as f:
-        polygon_ids_mapping = json.load(f)
+    with fs.open(polygon_numericids_to_stringids_file) as f:
+        polygon_numericids_to_stringids = json.load(f)
 
     # Find all the drill output parquet files
-    polygon_ids = list(polygon_ids_mapping.values())
+    polygon_ids = list(polygon_numericids_to_stringids.values())
 
     sqs_client = boto3.client("sqs")
     ids_sqs_queue_url = get_queue_url(queue_name=ids_sqs_queue, sqs_client=sqs_client)
