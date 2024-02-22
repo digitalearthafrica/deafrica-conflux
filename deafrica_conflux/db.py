@@ -567,11 +567,10 @@ def add_waterbody_observations_table_to_db(
     table = create_waterbody_obs_table(engine)
 
     # Note: Doing it this way because drill outputs can be millions of rows.
-    with Session() as session:
-        obs_ids_to_check = [f"{task_id_string}_{i}" for i in df.index.to_list()]
-        obs_ids_exist = session.scalars(
-            select(table).where(table.c.obs_id.in_(obs_ids_to_check))
-        ).all()
+    session = Session()  #  Create a new session for this task
+    obs_ids_to_check = [f"{task_id_string}_{i}" for i in df.index.to_list()]
+    obs_ids_exist = session.scalars(select(table).where(table.c.obs_id.in_(obs_ids_to_check))).all()
+    session.close()  # Close the session to return the connection to the pool
 
     update_statements = []
     insert_objects_list = []
@@ -612,34 +611,33 @@ def add_waterbody_observations_table_to_db(
 
     if update_statements:
         _log.info(f"Updating {len(update_statements)} observations in the {table.name} table")
-        with Session() as session:
-            for statement in update_statements:
-                try:
-                    session.execute(statement)
-                except Exception as error:
-                    session.rollback()
-                    _log.exception(error)
-                else:
-                    session.commit()
+        session = Session()  #  Create a new session for this task
+        for statement in update_statements:
+            try:
+                session.execute(statement)
+            except Exception as error:
+                session.rollback()
+                _log.exception(error)
+            else:
+                session.commit()
+        session.close()  # Close the session to return the connection to the pool
+
     else:
         _log.error(f"No observations to update in the {table.name} table")
 
     if insert_objects_list:
-        with Session() as session:
-            session.begin()
-            try:
-                _log.info(
-                    f"Adding {len(insert_objects_list)} observations to the {table.name} table"
-                )
-                session.execute(insert(table), insert_objects_list)
-            except Exception as error:
-                session.rollback()
-                _log.exception(error)
-                _log.info("Insert operation failed!")
-                # raise
-            else:
-                session.commit()
-            session.close()
+        session = Session()  #  Create a new session for this task
+        try:
+            _log.info(f"Adding {len(insert_objects_list)} observations to the {table.name} table")
+            session.execute(insert(table), insert_objects_list)
+        except Exception as error:
+            session.rollback()
+            _log.exception(error)
+            _log.info("Insert operation failed!")
+            # raise
+        else:
+            session.commit()
+        session.close()  # Close the session to return the connection to the pool
     else:
         _log.error(f"No observations to add to the {table.name} table")
 
