@@ -229,7 +229,6 @@ def drop_all_waterbody_tables(engine: Engine):
 def add_waterbody_polygons_to_db(
     engine: Engine,
     waterbodies_polygons_fp: str | Path,
-    drop_table: bool = False,
     update_rows: bool = True,
 ):
     """
@@ -238,10 +237,8 @@ def add_waterbody_polygons_to_db(
     Parameters
     ----------
     engine : Engine
-    drop_table : bool, optional
-        If True drop the waterbodies table first and create a new table., by default True
     update_rows : bool, optional
-        If True if the polygon uid already exists in the waterbodies table, the row will be updatedit will be updated,
+        If True if the polygon uid already exists in the waterbodies table, the row will be updated,
         else it will be skipped.
     waterbodies_polygons_fp : str | Path | None, optional
         Path to the shapefile/geojson/geoparquet file containing the waterbodies polygons, by default None, by default None
@@ -253,131 +250,112 @@ def add_waterbody_polygons_to_db(
     if not check_file_exists(waterbodies_polygons_fp):
         _log.error(f"File {waterbodies_polygons_fp} does not exist!")
         raise FileNotFoundError(f"File {waterbodies_polygons_fp} does not exist!)")
+
+    _, file_extension = os.path.splitext(waterbodies_polygons_fp)
+    if file_extension in PARQUET_EXTENSIONS:
+        try:
+            waterbodies = gpd.read_parquet(waterbodies_polygons_fp).to_crs("EPSG:4326")
+        except Exception as error:
+            _log.error(f"Could not load file {waterbodies_polygons_fp}")
+            _log.error(error)
+            raise error
     else:
-        _, file_extension = os.path.splitext(waterbodies_polygons_fp)
-        if file_extension in PARQUET_EXTENSIONS:
-            try:
-                waterbodies = gpd.read_parquet(waterbodies_polygons_fp).to_crs("EPSG:4326")
-            except Exception as error:
-                _log.error(f"Could not load file {waterbodies_polygons_fp}")
-                _log.error(error)
-                raise error
+        try:
+            waterbodies = gpd.read_file(waterbodies_polygons_fp).to_crs("EPSG:4326")
+        except Exception as error:
+            _log.error(f"Could not load file {waterbodies_polygons_fp}")
+            _log.error(error)
+            raise error
+
+    # Check the id columns are  unique.
+    numeric_id = "WB_ID"
+    string_id = "UID"
+    numeric_id = guess_id_field(input_gdf=waterbodies, use_id=numeric_id)
+    assert is_integer_dtype(waterbodies[numeric_id]) or is_float_dtype(waterbodies[numeric_id])
+    string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
+    assert is_string_dtype(waterbodies[string_id])
+
+    _log.info(f"Found {len(waterbodies)} polygons in {waterbodies_polygons_fp}")
+
+    # Ensure table exists.
+    table_name = Waterbody.__tablename__
+    table = get_table(engine=engine, table_name=table_name)
+    if table is None:
+        raise NoSuchTableError
+
+    # Create a sesssion
+    Session = sessionmaker(bind=engine)
+
+    update_statements = []
+    insert_objects_list = []
+
+    # Get the polygon uids in the database table
+    # Note: Getting them all in a list works fine for about 700,000 polygons.
+    with Session() as session:
+        uids = session.scalars(select(table.c["uid"])).all()
+        _log.info(f"Found {len(uids)} polygon UIDs in the {table.name} table")
+        session.close()
+
+    srid = waterbodies.crs.to_epsg()
+
+    for row in waterbodies.itertuples():
+        if row.UID not in uids:
+            object_ = dict(
+                uid=row.UID,
+                area_m2=row.area_m2,
+                wb_id=row.WB_ID,
+                length_m=row.length_m,
+                perim_m=row.perim_m,
+                timeseries=row.timeseries,
+                geometry=f"SRID={srid};{row.geometry.wkt}",
+            )
+            insert_objects_list.append(object_)
         else:
-            try:
-                waterbodies = gpd.read_file(waterbodies_polygons_fp).to_crs("EPSG:4326")
-            except Exception as error:
-                _log.error(f"Could not load file {waterbodies_polygons_fp}")
-                _log.error(error)
-                raise error
-
-        # Check the id columns are  unique.
-        numeric_id = "WB_ID"
-        string_id = "UID"
-        numeric_id = guess_id_field(input_gdf=waterbodies, use_id=numeric_id)
-        assert is_integer_dtype(waterbodies[numeric_id]) or is_float_dtype(waterbodies[numeric_id])
-        string_id = guess_id_field(input_gdf=waterbodies, use_id=string_id)
-        assert is_string_dtype(waterbodies[string_id])
-
-        _log.info(f"Found {len(waterbodies)} polygons in {waterbodies_polygons_fp}")
-
-        # Create a sesssion
-        Session = sessionmaker(bind=engine)
-
-        update_statements = []
-        insert_objects_list = []
-        if drop_table:
-            # Drop the waterbodies table
-            drop_waterbody_table(engine)
-
-            # Create the table
-            table = create_waterbody_table(engine)
-
-            srid = waterbodies.crs.to_epsg()
-
-            for row in waterbodies.itertuples():
-                object_ = dict(
+            if update_rows:
+                values_to_update = dict(
                     area_m2=row.area_m2,
-                    uid=row.UID,
                     wb_id=row.WB_ID,
                     length_m=row.length_m,
                     perim_m=row.perim_m,
                     timeseries=row.timeseries,
                     geometry=f"SRID={srid};{row.geometry.wkt}",
                 )
-                insert_objects_list.append(object_)
+                update_stmt = update(table).where(table.c.uid == row.UID).values(values_to_update)
+                update_statements.append(update_stmt)
+            else:
+                continue
 
-        else:
-            # Ensure table exists.
-            table = create_waterbody_table(engine)
-
-            # Get the polygon uids in the database table
-            # Note: Getting them all in a list works fine for about 700,000 polygons.
-            with Session() as session:
-                uids = session.scalars(select(table.c["uid"])).all()
-                _log.info(f"Found {len(uids)} polygon UIDs in the {table.name} table")
-
-            srid = waterbodies.crs.to_epsg()
-
-            for row in waterbodies.itertuples():
-                if row.UID not in uids:
-                    object_ = dict(
-                        uid=row.UID,
-                        area_m2=row.area_m2,
-                        wb_id=row.WB_ID,
-                        length_m=row.length_m,
-                        perim_m=row.perim_m,
-                        timeseries=row.timeseries,
-                        geometry=f"SRID={srid};{row.geometry.wkt}",
-                    )
-                    insert_objects_list.append(object_)
-                else:
-                    if update_rows:
-                        values_to_update = dict(
-                            area_m2=row.area_m2,
-                            wb_id=row.WB_ID,
-                            length_m=row.length_m,
-                            perim_m=row.perim_m,
-                            timeseries=row.timeseries,
-                            geometry=f"SRID={srid};{row.geometry.wkt}",
-                        )
-                        update_stmt = (
-                            update(table).where(table.c.uid == row.UID).values(values_to_update)
-                        )
-                        update_statements.append(update_stmt)
-                    else:
-                        continue
-
-        if update_statements:
-            _log.info(f"Updating {len(update_statements)} polygons in the {table.name} table")
-            with Session() as session:
-                for statement in update_statements:
-                    try:
-                        session.execute(statement)
-                    except Exception as error:
-                        session.rollback()
-                        _log.exception(error)
-                    else:
-                        session.commit()
-        else:
-            _log.error(f"No polygons to update in the {table.name} table")
-
-        if insert_objects_list:
-            with Session() as session:
-                session.begin()
+    if update_statements:
+        _log.info(f"Updating {len(update_statements)} polygons in the {table.name} table")
+        with Session() as session:
+            session.begin()
+            for statement in update_statements:
                 try:
-                    _log.info(
-                        f"Adding {len(insert_objects_list)} polygons to the {table.name} table"
-                    )
-                    session.execute(insert(table), insert_objects_list)
+                    session.execute(statement)
                 except Exception as error:
                     session.rollback()
                     _log.exception(error)
-                    _log.error("Insert operation failed")
                 else:
                     session.commit()
-                session.close()
-        else:
-            _log.error(f"No polygons to add to the {table.name} table")
+            session.close()
+    else:
+        _log.error(f"No polygons to update in the {table.name} table")
+
+    if insert_objects_list:
+        with Session() as session:
+            session.begin()
+            try:
+                _log.info(f"Adding {len(insert_objects_list)} polygons to the {table.name} table")
+                session.execute(insert(table), insert_objects_list)
+            except Exception as error:
+                session.rollback()
+                _log.exception(error)
+                _log.error("Insert operation failed")
+            else:
+                session.commit()
+            session.close()
+    else:
+        _log.error(f"No polygons to add to the {table.name} table")
 
 
 def add_waterbody_observations_pq_files_to_db(
