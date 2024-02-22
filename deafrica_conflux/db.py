@@ -380,14 +380,17 @@ def add_waterbody_observations_pq_files_to_db(
     if not engine:
         engine = get_engine_waterbodies()
 
-    # Create a sesssion
-    Session = sessionmaker(bind=engine)
-
+    # Ensure table exists.
     table_name = WaterbodyObservation.__tablename__
     table = get_table(engine=engine, table_name=table_name)
+    if table is None:
+        raise NoSuchTableError
 
     if isinstance(paths, str):
         paths = [paths]
+
+    # Create a sesssion
+    Session = sessionmaker(bind=engine)
 
     for idx, path in enumerate(paths):
         _log.info(f"Processing {path}: {idx+1}/{len(paths)}")
@@ -413,6 +416,7 @@ def add_waterbody_observations_pq_files_to_db(
                 obs_ids_exist = session.scalars(
                     select(table).where(table.c.obs_id.in_(obs_ids_to_check))
                 ).all()
+                session.close()
 
             for row in df.itertuples():
                 obs_id = f"{task_id_string}_{row.Index}"
@@ -463,6 +467,7 @@ def add_waterbody_observations_pq_files_to_db(
                             _log.exception(error)
                         else:
                             session.commit()
+                    session.close()
             else:
                 _log.error(f"No observations to update in the {table.name} table")
 
