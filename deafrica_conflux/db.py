@@ -37,28 +37,19 @@ def get_engine_sqlite_file_db(db_file_path) -> Engine:
     """
     Get a SQLite on-disk database engine.
     """
-    # identifying name of the SQLAlchemy dialect,
     dialect = "sqlite"
-    # name of the DBAPI to be used to connect to the database
     driver = "pysqlite"
-    # dialect+driver://username:password@host:port/database
-    # sqlite://<nohostname>/<path>
-    # where <path> is relative:
     database_url = f"{dialect}+{driver}:///{db_file_path}"
     engine = create_engine(database_url, echo=True, future=True)
-    # listener is responsible for loading the SpatiaLite extension,
-    # which is a necessary operation for using SpatiaLite through SQL.
+    # Load the SpatiaLite extension
     # listen(engine, "connect", load_spatialite)
     return engine
 
 
 def get_engine_sqlite_in_memory_db() -> Engine:
     """Get a SQLite in-memory database engine."""
-    # identifying name of the SQLAlchemy dialect,
     dialect = "sqlite"
-    # name of the DBAPI to be used to connect to the database
     driver = "pysqlite"
-    # dialect+driver://username:password@host:port/database
     database_url = f"{dialect}+{driver}:///:memory:"
     engine = create_engine(
         database_url,
@@ -66,8 +57,7 @@ def get_engine_sqlite_in_memory_db() -> Engine:
         echo=True,
         future=True,
     )
-    # listener is responsible for loading the SpatiaLite extension,
-    # which is a necessary operation for using SpatiaLite through SQL.
+    # Load the SpatiaLite extension
     # listen(engine, "connect", load_spatialite)
     return engine
 
@@ -86,58 +76,24 @@ def get_engine_waterbodies() -> Engine:
     port = os.environ.get("WATERBODIES_DB_PORT", 5432)
     database_name = os.environ.get("WATERBODIES_DB_NAME")
 
-    # identifying name of the SQLAlchemy dialect
     dialect = "postgresql"
-    # name of the DBAPI to be used to connect to the database
     driver = "psycopg2"
-    # dialect+driver://username:password@host:port/database
     database_url = f"{dialect}+{driver}://{username}:{password}@{host}:{port}/{database_name}"
     return create_engine(database_url, future=True)
 
 
-def get_engine_waterbodies_dev_sandbox() -> Engine:
-    """Get the Waterbodies database engine.
+def get_engine_waterbodies_dev_sandbox(password: str, pool_size: int = 5, max_overflow:int = 10) -> Engine:
+    """Get the DEV Waterbodies database engine."""
+    username = "waterbodies_writer"
+    host = "db-writer"
+    port =  5432
+    database_name = "waterbodies"
 
-    References environment variables WATERBODIES_DB_USER,
-    WATERBODIES_DB_PASS, WATERBODIES_DB_HOST,
-    WATERBODIES_DB_PORT, and WATERBODIES_DB_NAME.
-    HOST and PORT default to localhost and 5432 respectively.
-    """
-    username = os.environ.get("DB_USERNAME")
-    password = os.environ.get("DB_PASSWORD")
-    host = os.environ.get("DB_HOSTNAME", "localhost")
-    port = os.environ.get("DB_PORT", 5432)
-    database_name = os.environ.get("DB_DATABASE")
-
-    # identifying name of the SQLAlchemy dialect
     dialect = "postgresql"
-    # name of the DBAPI to be used to connect to the database
     driver = "psycopg2"
-    # dialect+driver://username:password@host:port/database
     database_url = f"{dialect}+{driver}://{username}:{password}@{host}:{port}/{database_name}"
-    return create_engine(database_url, future=True)
+    return create_engine(database_url, future=True, pool_size=pool_size, max_overflow=max_overflow)
 
-
-def list_schemas(engine: Engine) -> list[str]:
-    """List the schemas present in the database.
-
-    Parameters
-    ----------
-    engine: sqlalchemy.engine.Engine
-        Database engine.
-    """
-    # Create an inspector
-    inspector = inspect(engine)
-
-    # List schemas in the database
-    schemas = inspector.get_schema_names()
-
-    if schemas:
-        _log.info(f"Schemas in the database: {', '.join(schemas)}")
-    else:
-        _log.info("No schemas found in database")
-
-    return schemas
 
 
 def list_tables(engine: Engine) -> list[str]:
