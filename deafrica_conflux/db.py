@@ -188,7 +188,9 @@ def create_table(engine: Engine, model):
 
     if table_name not in tables_in_db:
         _log.info(f"Creating the {table_name} table ...")
-        model.__table__.create(engine, checkfirst=False)
+        # Create the table only if it doesn't already exist
+        # using checkfirst=True because of multi-processing.
+        model.__table__.create(engine, checkfirst=True)
         _log.info(f"{table_name} table created")
     else:
         _log.info(f"{table_name} table already exists.\nSkipping table creation")
@@ -381,8 +383,9 @@ def add_waterbody_observations_pq_files_to_db(
         engine = get_engine_waterbodies()
 
     # Ensure table exists.
-    table_name = WaterbodyObservation.__tablename__
-    table = get_table(engine=engine, table_name=table_name)
+    # table_name = WaterbodyObservation.__tablename__
+    # table = get_table(engine=engine, table_name=table_name)
+    table = create_waterbody_obs_table(engine=engine)
     if table is None:
         raise NoSuchTableError
 
